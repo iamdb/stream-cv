@@ -5,6 +5,7 @@ mod stream;
 use std::env;
 
 use frame::Frame;
+use opencv::core::get_number_of_cpus;
 use pipeline::Pipeline;
 use stream::VideoStream;
 
@@ -53,12 +54,10 @@ async fn process_thread(thread_num: i32, pipe: Pipeline) {
 #[tokio::main]
 async fn main() {
     let url = &env::args().nth(1).expect("cannot open");
-    //let num_of_cpus = get_number_of_cpus().unwrap();
-    //let processor = Process::new(num_of_cpus / 2, process_frame);
+    let num_of_cpus = get_number_of_cpus().unwrap();
     let pipe = pipeline::new();
-    //process_frame(&pipe);
 
-    for n in 0..6 {
+    for n in 0..num_of_cpus {
         process_thread(n, pipe.clone()).await;
     }
 
