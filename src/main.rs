@@ -1,63 +1,67 @@
-extern crate ffmpeg_next as ffmpeg;
+mod frame;
+mod pipeline;
+mod stream;
 
-use ffmpeg::format::{input, Pixel};
-use ffmpeg::media::Type;
-use ffmpeg::software::scaling::{context::Context, flag::Flags};
-use ffmpeg::util::frame::video::Video;
 use std::env;
-use std::fs::File;
-use std::io::prelude::*;
 
-fn main() -> Result<(), ffmpeg::Error> {
-    if let Ok(mut ictx) = input(&env::args().nth(1).expect("cannot open")) {
-        let input = ictx
-            .streams()
-            .best(Type::Video)
-            .ok_or(ffmpeg::Error::StreamNotFound)?;
-        let video_stream_index = input.index();
+use frame::Frame;
+use pipeline::Pipeline;
+use stream::VideoStream;
 
-        let mut decoder = input.codec().decoder().video()?;
+async fn process_frame(frame: Frame) {
+    frame
+        .bilateral_filter()
+        .await
+        .detail_enhance()
+        .await
+        .dilate()
+        .await;
 
-        let mut scaler = Context::get(
-            decoder.format(),
-            decoder.width(),
-            decoder.height(),
-            Pixel::RGB24,
-            decoder.width(),
-            decoder.height(),
-            Flags::BILINEAR,
-        )?;
+    // let alpha = 1.0;
+    // let beta = 0.25;
+    //
+    // let overlayed = frame.bilateral_filter().dilate().add_weighted(
+    //     processed_frame.processed_mat.clone(),
+    //     alpha,
+    //     beta,
+    // );
 
-        let mut frame_index = 0;
+    // println!(
+    //     "processing frame {} on thread {} of {}",
+    //     frame.num,
+    //     current_thread_index().unwrap(),
+    //     current_num_threads(),
+    // );
 
-        let mut receive_and_process_decoded_frames =
-            |decoder: &mut ffmpeg::decoder::Video| -> Result<(), ffmpeg::Error> {
-                let mut decoded = Video::empty();
-                while decoder.receive_frame(&mut decoded).is_ok() {
-                    let mut rgb_frame = Video::empty();
-                    scaler.run(&decoded, &mut rgb_frame)?;
-                    save_file(&rgb_frame, frame_index).unwrap();
-                    frame_index += 1;
-                }
-                Ok(())
-            };
-
-        for (stream, packet) in ictx.packets() {
-            if stream.index() == video_stream_index {
-                decoder.send_packet(&packet)?;
-                receive_and_process_decoded_frames(&mut decoder)?;
-            }
-        }
-        decoder.send_eof()?;
-        receive_and_process_decoded_frames(&mut decoder)?;
-    }
-
-    Ok(())
+    //imshow("frames", &processed_frame.processed_mat).unwrap();
+    //imshow("og", &frame.mat).unwrap();
+    //poll_key().unwrap();
 }
 
-fn save_file(frame: &Video, index: usize) -> std::result::Result<(), std::io::Error> {
-    let mut file = File::create(format!("frame{}.ppm", index))?;
-    file.write_all(format!("P6\n{} {}\n255\n", frame.width(), frame.height()).as_bytes())?;
-    file.write_all(frame.data(0))?;
-    Ok(())
+async fn process_thread(thread_num: i32, pipe: Pipeline) {
+    tokio::spawn(async move {
+        let frame_stream = pipe.stream();
+
+        while !frame_stream.is_disconnected() {
+            let frame = pipe.recv().await.unwrap();
+            process_frame(frame.clone()).await;
+            println!("processed frame {} on thread {}", frame.num, thread_num);
+        }
+    });
+}
+
+#[tokio::main]
+async fn main() {
+    let url = &env::args().nth(1).expect("cannot open");
+    //let num_of_cpus = get_number_of_cpus().unwrap();
+    //let processor = Process::new(num_of_cpus / 2, process_frame);
+    let pipe = pipeline::new();
+    //process_frame(&pipe);
+
+    for n in 0..6 {
+        process_thread(n, pipe.clone()).await;
+    }
+
+    let mut stream = VideoStream::new(url.to_string(), &pipe);
+    stream.decode().await
 }
