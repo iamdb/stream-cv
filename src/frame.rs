@@ -7,7 +7,7 @@ use opencv::{
     photo::detail_enhance,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Frame {
     pub mat: Mat,
     pub processed_mat: Mat,
@@ -17,6 +17,7 @@ pub struct Frame {
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
+#[allow(dead_code)]
 impl Frame {
     pub async fn to_gray(&self) -> Frame {
         let mut gray = Mat::default();

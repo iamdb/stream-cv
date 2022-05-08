@@ -1,3 +1,6 @@
+extern crate pretty_env_logger;
+#[macro_use]
+extern crate log;
 mod frame;
 mod pipeline;
 mod stream;
@@ -5,12 +8,11 @@ mod stream;
 use std::env;
 
 use frame::Frame;
-use opencv::core::get_number_of_cpus;
 use pipeline::Pipeline;
 use stream::VideoStream;
 
-async fn process_frame(frame: Frame) {
-    frame
+async fn process_frame(frame: Frame) -> Frame {
+    let processed_frame = frame
         .bilateral_filter()
         .await
         .detail_enhance()
@@ -27,39 +29,63 @@ async fn process_frame(frame: Frame) {
     //     beta,
     // );
 
-    // println!(
+    // debug!(
     //     "processing frame {} on thread {} of {}",
     //     frame.num,
     //     current_thread_index().unwrap(),
     //     current_num_threads(),
     // );
 
-    //imshow("frames", &processed_frame.processed_mat).unwrap();
-    //imshow("og", &frame.mat).unwrap();
-    //poll_key().unwrap();
+    //
+    processed_frame
 }
 
-async fn process_thread(thread_num: i32, pipe: Pipeline) {
-    tokio::spawn(async move {
-        let frame_stream = pipe.stream();
+async fn route_frames(pipe: Pipeline) -> ! {
+    //let mut output_frames: HashMap<i32, Frame> = HashMap::new();
 
-        while !frame_stream.is_disconnected() {
-            let frame = pipe.recv().await.unwrap();
-            process_frame(frame.clone()).await;
-            println!("processed frame {} on thread {}", frame.num, thread_num);
+    loop {
+        tokio::select! {
+            frame = pipe.decode_recv() => {
+                let f = frame.unwrap();
+                debug!("frame {}\tdecoded", f.num);
+                pipe.process_send(f).await;
+            },
+            frame = pipe.process_recv() => {
+                let p = pipe.clone();
+                tokio::spawn(async move {
+                    let f = frame.unwrap();
+                    let frame_num = f.num;
+                    let processed_frame = process_frame(f).await;
+                    debug!("frame {}\tprocessed", frame_num);
+                    p.output_send(processed_frame).await;
+                });
+            },
+            frame = pipe.output_recv() => {
+                let f = frame.unwrap();
+                debug!("frame {}\toutput", f.num);
+                //output_frames.insert(f.num, f);
+                // let mut sorted: Vec<_> = output_frames.iter().collect();
+                // sorted.sort_by_key(|a| a.0);
+                //
+                // let (frame_num, current_frame) = sorted.pop().unwrap();
+                // imshow("frames", &current_frame.processed_mat).unwrap();
+                // poll_key().unwrap();
+            },
+
         }
-    });
+    }
 }
 
 #[tokio::main]
 async fn main() {
+    pretty_env_logger::init_timed();
     let url = &env::args().nth(1).expect("cannot open");
-    let num_of_cpus = get_number_of_cpus().unwrap();
     let pipe = pipeline::new();
+    let p = pipe.clone();
 
-    for n in 0..num_of_cpus {
-        process_thread(n, pipe.clone()).await;
-    }
+    tokio::spawn(async move {
+        route_frames(p).await;
+    });
 
     let mut stream = VideoStream::new(url.to_string(), &pipe);
     stream.decode().await

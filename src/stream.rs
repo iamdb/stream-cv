@@ -4,7 +4,7 @@ use crate::pipeline::Pipeline;
 use ffmpeg::format::{input, Pixel};
 use ffmpeg::frame::Video;
 use ffmpeg::software::scaling::{context::Context as FFContext, flag::Flags};
-use ffmpeg::sys::{av_log_set_level, AV_LOG_WARNING};
+use ffmpeg::sys::{av_log_set_level, AV_LOG_QUIET};
 use opencv::core::{Mat, CV_8UC3};
 use opencv::imgproc::{cvt_color, COLOR_RGB2BGR};
 use std::ffi::c_void;
@@ -36,12 +36,11 @@ impl<'p> VideoStream<'p> {
     pub async fn decode(&mut self) {
         ffmpeg::init().unwrap();
 
-        unsafe { av_log_set_level(AV_LOG_WARNING) }
+        unsafe { av_log_set_level(AV_LOG_QUIET) }
 
-        println!("****starting decoder*****");
-        self.decoding = true;
+        info!("****setting up decoder*****");
         if let Ok(mut ictx) = input(&self.url) {
-            println!("*****building input*****");
+            info!("*****building input*****");
             let streams = ictx.streams();
 
             let inputs = streams
@@ -56,7 +55,7 @@ impl<'p> VideoStream<'p> {
             let input = inputs.first().unwrap();
 
             let video_stream_index = input.index();
-            println!("{:?}", input.metadata());
+            info!("{:?}", input.metadata());
 
             let context_decoder =
                 ffmpeg::codec::context::Context::from_parameters(input.parameters()).unwrap();
@@ -74,6 +73,9 @@ impl<'p> VideoStream<'p> {
                 )
                 .unwrap(),
             );
+
+            info!("decoding stream");
+            self.decoding = true;
 
             for (stream, packet) in ictx.packets() {
                 if stream.index() == video_stream_index {
@@ -124,9 +126,7 @@ impl<'p> VideoStream<'p> {
                 processed_mat: bgr_mat.clone(),
             };
 
-            println!("sending frame {} to processor", new_frame.num);
-
-            self.pipe.send(new_frame).await;
+            self.pipe.decode_send(new_frame).await;
 
             self.frame_index += 1;
         }
