@@ -8,6 +8,7 @@ mod stream;
 use std::env;
 
 use frame::Frame;
+use opencv::highgui::{imshow, poll_key, WINDOW_AUTOSIZE, WINDOW_GUI_EXPANDED, WINDOW_KEEPRATIO};
 use pipeline::Pipeline;
 use stream::VideoStream;
 
@@ -68,8 +69,8 @@ async fn route_frames(pipe: Pipeline) -> ! {
                 // sorted.sort_by_key(|a| a.0);
                 //
                 // let (frame_num, current_frame) = sorted.pop().unwrap();
-                // imshow("frames", &current_frame.processed_mat).unwrap();
-                // poll_key().unwrap();
+                //imshow("frames", &f.mat).unwrap();
+                //poll_key().unwrap();
             },
 
         }
@@ -86,6 +87,12 @@ async fn main() {
     tokio::spawn(async move {
         route_frames(p).await;
     });
+
+    // opencv::highgui::named_window(
+    //     "frames",
+    //     WINDOW_AUTOSIZE | WINDOW_KEEPRATIO | WINDOW_GUI_EXPANDED,
+    // )
+    // .unwrap();
 
     let mut stream = VideoStream::new(url.to_string(), &pipe);
     stream.decode().await
