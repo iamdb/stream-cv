@@ -8,9 +8,10 @@ mod stream;
 use std::env;
 
 use frame::Frame;
-use opencv::highgui::{imshow, poll_key, WINDOW_AUTOSIZE, WINDOW_GUI_EXPANDED, WINDOW_KEEPRATIO};
+use futures::StreamExt;
 use pipeline::Pipeline;
 use stream::VideoStream;
+use tokio::select;
 
 async fn process_frame(frame: Frame) -> Frame {
     let processed_frame = frame
@@ -21,37 +22,22 @@ async fn process_frame(frame: Frame) -> Frame {
         .dilate()
         .await;
 
-    // let alpha = 1.0;
-    // let beta = 0.25;
-    //
-    // let overlayed = frame.bilateral_filter().dilate().add_weighted(
-    //     processed_frame.processed_mat.clone(),
-    //     alpha,
-    //     beta,
-    // );
-
-    // debug!(
-    //     "processing frame {} on thread {} of {}",
-    //     frame.num,
-    //     current_thread_index().unwrap(),
-    //     current_num_threads(),
-    // );
-
-    //
     processed_frame
 }
 
 async fn route_frames(pipe: Pipeline) -> ! {
-    //let mut output_frames: HashMap<i32, Frame> = HashMap::new();
+    let mut decode_stream = pipe.decode_stream();
+    let mut process_stream = pipe.process_stream();
+    let mut output_stream = pipe.output_stream();
 
     loop {
-        tokio::select! {
-            frame = pipe.decode_recv() => {
+        select! {
+            frame = decode_stream.next() => {
                 let f = frame.unwrap();
                 debug!("frame {}\tdecoded", f.num);
                 pipe.process_send(f).await;
             },
-            frame = pipe.process_recv() => {
+            frame = process_stream.next() => {
                 let p = pipe.clone();
                 tokio::spawn(async move {
                     let f = frame.unwrap();
@@ -61,16 +47,9 @@ async fn route_frames(pipe: Pipeline) -> ! {
                     p.output_send(processed_frame).await;
                 });
             },
-            frame = pipe.output_recv() => {
+            frame = output_stream.next() => {
                 let f = frame.unwrap();
                 debug!("frame {}\toutput", f.num);
-                //output_frames.insert(f.num, f);
-                // let mut sorted: Vec<_> = output_frames.iter().collect();
-                // sorted.sort_by_key(|a| a.0);
-                //
-                // let (frame_num, current_frame) = sorted.pop().unwrap();
-                //imshow("frames", &f.mat).unwrap();
-                //poll_key().unwrap();
             },
 
         }
@@ -87,12 +66,6 @@ async fn main() {
     tokio::spawn(async move {
         route_frames(p).await;
     });
-
-    // opencv::highgui::named_window(
-    //     "frames",
-    //     WINDOW_AUTOSIZE | WINDOW_KEEPRATIO | WINDOW_GUI_EXPANDED,
-    // )
-    // .unwrap();
 
     let mut stream = VideoStream::new(url.to_string(), &pipe);
     stream.decode().await

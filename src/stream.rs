@@ -79,10 +79,14 @@ impl<'p> VideoStream<'p> {
 
             for (stream, packet) in ictx.packets() {
                 if stream.index() == video_stream_index {
-                    decoder.send_packet(&packet).unwrap();
-                    self.receive_and_process_decoded_frames(&mut decoder)
-                        .await
-                        .unwrap();
+                    match decoder.send_packet(&packet) {
+                        Ok(_) => {
+                            self.receive_and_process_decoded_frames(&mut decoder)
+                                .await
+                                .unwrap();
+                        }
+                        Err(error) => error!("{}", error.to_string()),
+                    }
                 }
             }
 

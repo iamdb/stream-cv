@@ -1,4 +1,4 @@
-use flume::{unbounded, Receiver, RecvError, Sender};
+use flume::{r#async::RecvStream, unbounded, Receiver, Sender};
 
 use crate::frame::Frame;
 
@@ -29,24 +29,23 @@ pub fn new() -> Pipeline {
 }
 
 impl Pipeline {
-    pub async fn process_recv(&self) -> Result<Frame, RecvError> {
-        self.process_receiver.recv_async().await
+    pub fn process_stream(&self) -> RecvStream<Frame> {
+        self.process_receiver.stream()
     }
 
     pub async fn process_send(&self, frame: Frame) {
         self.process_sender.send_async(frame).await.unwrap();
     }
-
-    pub async fn output_recv(&self) -> Result<Frame, RecvError> {
-        self.output_receiver.recv_async().await
+    pub fn output_stream(&self) -> RecvStream<Frame> {
+        self.output_receiver.stream()
     }
 
     pub async fn output_send(&self, frame: Frame) {
         self.output_sender.send_async(frame).await.unwrap();
     }
 
-    pub async fn decode_recv(&self) -> Result<Frame, RecvError> {
-        self.decode_receiver.recv_async().await
+    pub fn decode_stream(&self) -> RecvStream<Frame> {
+        self.decode_receiver.stream()
     }
 
     pub async fn decode_send(&self, frame: Frame) {
