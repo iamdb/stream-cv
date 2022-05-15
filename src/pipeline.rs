@@ -163,7 +163,7 @@ fn output_frame(mut sf: MutexGuard<OrderedFrames>, next_frame_num: i64, stream_l
     }
 }
 
-fn show_frame(frame: &Reverse<Frame>) {
+fn _show_frame(frame: &Reverse<Frame>) {
     imshow("frames", &frame.0.processed_mat).unwrap();
     poll_key().unwrap();
 }
