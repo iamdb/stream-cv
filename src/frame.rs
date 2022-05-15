@@ -11,11 +11,31 @@ use opencv::{
 pub struct Frame {
     pub mat: Mat,
     pub processed_mat: Mat,
-    pub num: i32,
+    pub num: i64,
 }
 
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
+
+impl Eq for Frame {}
+
+impl PartialEq for Frame {
+    fn eq(&self, other: &Self) -> bool {
+        self.num.eq(&other.num)
+    }
+}
+
+impl PartialOrd for Frame {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.num.cmp(&other.num))
+    }
+}
+
+impl Ord for Frame {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.num.cmp(&other.num)
+    }
+}
 
 #[allow(dead_code)]
 impl Frame {

@@ -4,7 +4,7 @@ use crate::pipeline::Pipeline;
 use ffmpeg::format::{input, Pixel};
 use ffmpeg::frame::Video;
 use ffmpeg::software::scaling::{context::Context as FFContext, flag::Flags};
-use ffmpeg::sys::{av_log_set_level, AV_LOG_QUIET};
+use ffmpeg::sys::{av_log_set_level, AVCodecContext, AV_LOG_QUIET};
 use opencv::core::{Mat, CV_8UC3};
 use opencv::imgproc::{cvt_color, COLOR_RGB2BGR};
 use std::ffi::c_void;
@@ -15,7 +15,7 @@ pub struct VideoStream<'p> {
     _framerate: i32,
     pub decoding: bool,
     url: String,
-    pub frame_index: i32,
+    pub frame_index: i64,
     scaler: Option<FFContext>,
     pipe: &'p Pipeline,
 }
@@ -55,11 +55,18 @@ impl<'p> VideoStream<'p> {
             let input = inputs.first().unwrap();
 
             let video_stream_index = input.index();
-            info!("{:?}", input.metadata());
+            info!("Stream spec: {}", input.metadata().get("comment").unwrap());
 
             let context_decoder =
                 ffmpeg::codec::context::Context::from_parameters(input.parameters()).unwrap();
+
             let mut decoder = context_decoder.decoder().video().unwrap();
+
+            decoder.set_threading(ffmpeg::threading::Config {
+                count: 1,
+                kind: ffmpeg::threading::Type::Frame,
+                safe: true,
+            });
 
             self.scaler = Some(
                 FFContext::get(
