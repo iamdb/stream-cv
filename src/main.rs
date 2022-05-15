@@ -14,9 +14,9 @@ use stream::VideoStream;
 async fn main() {
     pretty_env_logger::init_timed();
     let url = &env::args().nth(1).expect("cannot open");
-    let pipe = pipeline::new();
 
-    pipeline::start_router(pipe.clone()).await;
+    let pipe = pipeline::new();
+    pipe.start_router().await;
 
     let mut stream = VideoStream::new(url.to_string(), &pipe);
     stream.decode().await

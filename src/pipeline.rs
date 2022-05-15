@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, thread};
 
-use flume::{bounded, r#async::RecvStream, unbounded, Receiver, Sender};
+use flume::{bounded, r#async::RecvStream, Receiver, Sender};
 use futures::StreamExt;
 use opencv::highgui::{imshow, poll_key};
 use tokio::{
@@ -9,6 +9,14 @@ use tokio::{
 };
 
 use crate::frame::Frame;
+
+#[derive(Debug, Clone)]
+struct OrderedFrames {
+    frames: BinaryHeap<Reverse<Frame>>,
+    next_frame_num: i64,
+}
+
+type SyncOrderedFrames = Arc<Mutex<OrderedFrames>>;
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -24,7 +32,7 @@ pub struct Pipeline {
 
 pub fn new() -> Pipeline {
     let (process_sender, process_receiver) = bounded::<Frame>(60);
-    let (output_sender, output_receiver) = unbounded::<Frame>();
+    let (output_sender, output_receiver) = bounded::<Frame>(20);
     let (decode_sender, decode_receiver) = bounded::<Frame>(60);
 
     let sorted_frames = Arc::new(Mutex::new(OrderedFrames {
@@ -93,56 +101,47 @@ impl Pipeline {
     pub async fn decode_send(&self, frame: Frame) {
         self.decode_sender.send_async(frame).await.unwrap();
     }
-}
 
-pub async fn start_router(pipe: Pipeline) {
-    let count = thread::available_parallelism().unwrap().get();
+    pub async fn start_router(&self) {
+        let count = thread::available_parallelism().unwrap().get();
 
-    for _ in 0..count {
-        let p = pipe.clone();
-        spawn(async move {
-            p.spawn_process_thread().await;
-        });
+        for _ in 0..count {
+            let p = self.clone();
+            spawn(async move {
+                p.spawn_process_thread().await;
+            });
+        }
+
+        for _ in 0..2 {
+            let p = self.clone();
+            spawn(async move {
+                p.route_frames().await;
+            });
+        }
     }
 
-    for _ in 0..2 {
-        let p = pipe.clone();
-        spawn(async move {
-            route_frames(p).await;
-        });
-    }
-}
+    async fn route_frames(&self) {
+        let mut decode_stream = self.decode_stream();
+        let mut output_stream = self.output_stream();
 
-#[derive(Debug, Clone)]
-struct OrderedFrames {
-    frames: BinaryHeap<Reverse<Frame>>,
-    next_frame_num: i64,
-}
+        loop {
+            select! {
+                frame = decode_stream.next() => {
+                    let f = frame.unwrap();
+                    debug!("frame {}\tdecoded\t\tbuffer {}", f.num, decode_stream.len());
+                    self.process_send(f).await;
+                },
+                frame = output_stream.next() => {
+                    let f = frame.unwrap();
+                    let mut sf = self.sorted_frames.lock().await;
+                    let next_frame_num = sf.next_frame_num + 1;
 
-type SyncOrderedFrames = Arc<Mutex<OrderedFrames>>;
+                    sf.frames.push(Reverse(f));
 
-async fn route_frames(pipe: Pipeline) {
-    let mut decode_stream = pipe.decode_stream();
-    let mut output_stream = pipe.output_stream();
+                    output_frame(sf, next_frame_num, output_stream.len() as i64);
+                },
 
-    loop {
-        select! {
-            frame = decode_stream.next() => {
-                let f = frame.unwrap();
-                debug!("frame {}\tdecoded\t\tbuffer {}", f.num, decode_stream.len());
-                pipe.process_send(f).await;
-            },
-            frame = output_stream.next() => {
-                let f = frame.unwrap();
-                let mut sf = pipe.sorted_frames.lock().await;
-                let next_frame_num = sf.next_frame_num + 1;
-
-                sf.frames.push(Reverse(f));
-
-                output_frame(sf, next_frame_num, output_stream.len() as i64);
-
-            },
-
+            }
         }
     }
 }
@@ -152,14 +151,19 @@ fn output_frame(mut sf: MutexGuard<OrderedFrames>, next_frame_num: i64, stream_l
         if let Some(min_frame) = sf.clone().frames.peek() {
             if min_frame.0.num == sf.next_frame_num {
                 sf.frames.pop();
-                //imshow("frames", &min_frame.0.processed_mat).unwrap();
-                //poll_key().unwrap();
                 debug!(
                     "frame {}\toutput\t\tnext_frame {}\tbuffer {}",
                     min_frame.0.num, next_frame_num, stream_len
                 );
                 sf.next_frame_num += 1;
+
+                //show_frame(min_frame);
             }
         }
     }
+}
+
+fn show_frame(frame: &Reverse<Frame>) {
+    imshow("frames", &frame.0.processed_mat).unwrap();
+    poll_key().unwrap();
 }

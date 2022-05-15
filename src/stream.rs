@@ -4,7 +4,7 @@ use crate::pipeline::Pipeline;
 use ffmpeg::format::{input, Pixel};
 use ffmpeg::frame::Video;
 use ffmpeg::software::scaling::{context::Context as FFContext, flag::Flags};
-use ffmpeg::sys::{av_log_set_level, AVCodecContext, AV_LOG_QUIET};
+use ffmpeg::sys::{av_log_set_level, AV_LOG_QUIET};
 use opencv::core::{Mat, CV_8UC3};
 use opencv::imgproc::{cvt_color, COLOR_RGB2BGR};
 use std::ffi::c_void;
