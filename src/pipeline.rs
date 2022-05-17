@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, thread};
 
-use flume::{bounded, r#async::RecvStream, Receiver, Sender};
+use flume::{bounded, r#async::RecvStream, unbounded, Receiver, Sender};
 use futures::StreamExt;
 use opencv::highgui::{imshow, poll_key};
 use tokio::{
@@ -24,6 +24,8 @@ pub struct Pipeline {
     decode_sender: Sender<Frame>,
     output_receiver: Receiver<Frame>,
     output_sender: Sender<Frame>,
+    preview_receiver: Receiver<Frame>,
+    preview_sender: Sender<Frame>,
     process_receiver: Receiver<Frame>,
     process_sender: Sender<Frame>,
     sorted_frames: SyncOrderedFrames,
@@ -33,6 +35,7 @@ pub fn new() -> Pipeline {
     let (process_sender, process_receiver) = bounded::<Frame>(120);
     let (output_sender, output_receiver) = bounded::<Frame>(60);
     let (decode_sender, decode_receiver) = bounded::<Frame>(120);
+    let (preview_sender, preview_receiver) = unbounded::<Frame>();
 
     let sorted_frames = Arc::new(Mutex::new(OrderedFrames {
         frames: BinaryHeap::new(),
@@ -44,6 +47,8 @@ pub fn new() -> Pipeline {
         decode_sender,
         output_receiver,
         output_sender,
+        preview_sender,
+        preview_receiver,
         process_receiver,
         process_sender,
         sorted_frames,
@@ -55,8 +60,8 @@ impl Pipeline {
         frame
             .bilateral_filter()
             .await
-            //.detail_enhance()
-            //.await
+            //            .detail_enhance()
+            //            .await
             .dilate()
             .await
     }
@@ -74,6 +79,12 @@ impl Pipeline {
                     }
                 }
             }
+        }
+    }
+
+    fn spawn_preview_thread(&self) {
+        while let Ok(frame) = self.preview_receiver.recv() {
+            show_frame(frame);
         }
     }
 
@@ -103,6 +114,11 @@ impl Pipeline {
 
     pub async fn start_router(&self) {
         let count = thread::available_parallelism().unwrap().get();
+        let p = self.clone();
+
+        thread::spawn(move || {
+            p.spawn_preview_thread();
+        });
 
         for i in 0..(count - 2) {
             let p = self.clone();
@@ -158,16 +174,15 @@ impl Pipeline {
                         "frame {}\toutput\t\tnext_frame {}\tbuffer {}",
                         min_frame.0.num, next_frame_num, stream_len
                     );
+                    self.preview_sender.send(min_frame.clone().0).unwrap();
                     sf.next_frame_num += 1;
-
-                    //show_frame(min_frame);
                 }
             }
         }
     }
+}
 
-    fn _show_frame(frame: &Reverse<Frame>) {
-        imshow("frames", &frame.0.processed_mat).unwrap();
-        poll_key().unwrap();
-    }
+fn show_frame(frame: Frame) {
+    imshow("frames", &frame.processed_mat).unwrap();
+    poll_key().unwrap();
 }

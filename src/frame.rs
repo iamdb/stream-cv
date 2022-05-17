@@ -4,7 +4,7 @@ use opencv::{
         bilateral_filter, canny, cvt_color, dilate as dilate_image, get_structuring_element,
         COLOR_BGR2GRAY, COLOR_GRAY2BGR, MORPH_DILATE,
     },
-    photo::detail_enhance,
+    photo::{detail_enhance, inpaint, INPAINT_TELEA},
 };
 
 #[derive(Clone, Debug)]
@@ -69,23 +69,6 @@ impl Frame {
 
         mutable_frame
     }
-    // pub fn color_filter(&self) -> Frame {
-    //     let mut filtered_image = Mat::default();
-    //     let mut mutable_frame = self.clone();
-    //
-    //     let blue = RGB8::new(0, 255, 0);
-    //
-    //     in_range(
-    //         &mutable_frame.processed_mat,
-    //         blue,
-    //         upperb,
-    //         &mut filtered_image,
-    //     );
-    //
-    //     mutable_frame.processed_mat = filtered_image;
-    //
-    //     return mutable_frame;
-    // }
     pub async fn bilateral_filter(&self) -> Frame {
         let mut filtered_image = Mat::default();
         let mut mutable_frame = self.clone();
@@ -161,21 +144,21 @@ impl Frame {
         mutable_frame
     }
 
-    // pub fn inpaint(&self, mask: Mat) -> Frame {
-    //     let mut painted = Mat::default();
-    //     let mut mutable_frame = self.clone();
-    //
-    //     inpaint(
-    //         &mutable_frame.processed_mat,
-    //         &mask,
-    //         &mut painted,
-    //         3.0,
-    //         INPAINT_TELEA,
-    //     )
-    //     .unwrap();
-    //
-    //     mutable_frame.processed_mat = painted;
-    //
-    //     return mutable_frame;
-    // }
+    pub fn inpaint(&self, mask: Mat) -> Frame {
+        let mut painted = Mat::default();
+        let mut mutable_frame = self.clone();
+
+        inpaint(
+            &mutable_frame.processed_mat,
+            &mask,
+            &mut painted,
+            3.0,
+            INPAINT_TELEA,
+        )
+        .unwrap();
+
+        mutable_frame.processed_mat = painted;
+
+        mutable_frame
+    }
 }
