@@ -1,3 +1,4 @@
+use libvips::{ops, VipsImage};
 use opencv::{
     core::{add_weighted, Mat, Point, Scalar, Size, ToOutputArray, BORDER_DEFAULT},
     imgproc::{
@@ -5,6 +6,7 @@ use opencv::{
         COLOR_BGR2GRAY, COLOR_GRAY2BGR, MORPH_DILATE,
     },
     photo::{detail_enhance, inpaint, INPAINT_TELEA},
+    prelude::MatTraitConstManual,
 };
 
 #[derive(Clone, Debug)]
@@ -12,6 +14,7 @@ pub struct Frame {
     pub mat: Mat,
     pub processed_mat: Mat,
     pub num: i64,
+    pub text: String,
 }
 
 unsafe impl Send for Frame {}
@@ -39,6 +42,31 @@ impl Ord for Frame {
 
 #[allow(dead_code)]
 impl Frame {
+    pub async fn run_ocr(&self) -> Frame {
+        let mut mutable_frame = self.clone();
+        let frame_size = mutable_frame.mat.size().unwrap();
+        let frame_bytes = mutable_frame.mat.data_bytes().unwrap();
+        let vips_image = VipsImage::new_from_memory(
+            frame_bytes,
+            frame_size.width,
+            frame_size.height,
+            1,
+            ops::BandFormat::Uchar,
+        )
+        .unwrap();
+        let png_image = ops::pngsave_buffer(&vips_image).unwrap();
+
+        let mut lt = leptess::LepTess::new(None, "eng").unwrap();
+        lt.set_image_from_mem(&png_image).unwrap();
+
+        let ocr_text = lt.get_utf8_text().unwrap();
+
+        if !ocr_text.is_empty() {
+            mutable_frame.text = ocr_text;
+        }
+
+        mutable_frame
+    }
     pub async fn to_gray(&self) -> Frame {
         let mut gray = Mat::default();
         let mut mutable_frame = self.clone();
@@ -118,7 +146,7 @@ impl Frame {
     pub async fn canny(&self) -> Frame {
         let mut canny_mat = Mat::default();
         let mut mutable_frame = self.clone();
-        canny(&self.processed_mat, &mut canny_mat, 40.0, 40.0, 3, true).unwrap();
+        canny(&self.processed_mat, &mut canny_mat, 100.0, 100.0, 3, false).unwrap();
 
         mutable_frame.processed_mat = canny_mat;
 
@@ -133,7 +161,7 @@ impl Frame {
             alpha,
             &overlay,
             beta,
-            1.8,
+            2.0,
             &mut weighted,
             0,
         )

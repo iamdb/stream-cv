@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-futures = "0.3.21"
 ffmpeg-next = "5.0.3"
+flume = "0.10.12"
+futures = "0.3.21"
+leptess = "0.13.2"
+libvips = "1.4.3"
+log = "0.4"
 opencv = { version = "0.63.1", features = ["clang-runtime", "rgb"]}
+pretty_env_logger = "0.4"
 rayon = "1.5.2"
 rgb = "0.8.32"
 tokio = { version = "1.18.1", features = ["full"] }
-flume = "0.10.12"
-log = "0.4"
-pretty_env_logger = "0.4"

@@ -33,7 +33,7 @@ pub struct Pipeline {
 
 pub fn new() -> Pipeline {
     let (process_sender, process_receiver) = bounded::<Frame>(120);
-    let (output_sender, output_receiver) = bounded::<Frame>(60);
+    let (output_sender, output_receiver) = bounded::<Frame>(1);
     let (decode_sender, decode_receiver) = bounded::<Frame>(120);
     let (preview_sender, preview_receiver) = unbounded::<Frame>();
 
@@ -57,12 +57,12 @@ pub fn new() -> Pipeline {
 
 impl Pipeline {
     async fn process_frame(&self, frame: Frame) -> Frame {
+        let canny_frame = frame.canny().await.to_bgr().await;
+
         frame
-            .bilateral_filter()
-            .await
-            //            .detail_enhance()
-            //            .await
             .dilate()
+            .await
+            .add_weighted(canny_frame.processed_mat, 0.8, 1.0)
             .await
     }
 
@@ -174,6 +174,11 @@ impl Pipeline {
                         "frame {}\toutput\t\tnext_frame {}\tbuffer {}",
                         min_frame.0.num, next_frame_num, stream_len
                     );
+
+                    if !min_frame.0.text.is_empty() {
+                        debug!("frame text: {}", min_frame.0.text);
+                    }
+
                     self.preview_sender.send(min_frame.clone().0).unwrap();
                     sf.next_frame_num += 1;
                 }

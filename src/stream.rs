@@ -57,16 +57,16 @@ impl<'p> VideoStream<'p> {
             let video_stream_index = input.index();
             info!("Stream spec: {}", input.metadata().get("comment").unwrap());
 
-            let context_decoder =
+            let mut context_decoder =
                 ffmpeg::codec::context::Context::from_parameters(input.parameters()).unwrap();
 
-            let mut decoder = context_decoder.decoder().video().unwrap();
-
-            decoder.set_threading(ffmpeg::threading::Config {
+            context_decoder.set_threading(ffmpeg::threading::Config {
                 count: 1,
                 kind: ffmpeg::threading::Type::Frame,
                 safe: true,
             });
+
+            let mut decoder = context_decoder.decoder().video().unwrap();
 
             self.scaler = Some(
                 FFContext::get(
@@ -135,6 +135,7 @@ impl<'p> VideoStream<'p> {
                 mat: bgr_mat.clone(),
                 num: self.frame_index,
                 processed_mat: bgr_mat.clone(),
+                text: "".to_string(),
             };
 
             self.pipe.decode_send(new_frame).await;
