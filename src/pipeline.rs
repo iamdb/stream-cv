@@ -1,5 +1,6 @@
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, thread};
 
+use chrono::Utc;
 use flume::{bounded, r#async::RecvStream, unbounded, Receiver, Sender};
 use futures::StreamExt;
 use opencv::highgui::{imshow, poll_key};
@@ -10,7 +11,7 @@ use tokio::{
 
 use crate::frame::Frame;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct OrderedFrames {
     frames: BinaryHeap<Reverse<Frame>>,
     next_frame_num: i64,
@@ -32,9 +33,11 @@ pub struct Pipeline {
 }
 
 pub fn new() -> Pipeline {
-    let (process_sender, process_receiver) = bounded::<Frame>(120);
-    let (output_sender, output_receiver) = bounded::<Frame>(1);
-    let (decode_sender, decode_receiver) = bounded::<Frame>(120);
+    let count = thread::available_parallelism().unwrap().get();
+
+    let (process_sender, process_receiver) = bounded::<Frame>(count);
+    let (output_sender, output_receiver) = bounded::<Frame>(count / 2);
+    let (decode_sender, decode_receiver) = bounded::<Frame>(count);
     let (preview_sender, preview_receiver) = unbounded::<Frame>();
 
     let sorted_frames = Arc::new(Mutex::new(OrderedFrames {
@@ -57,13 +60,9 @@ pub fn new() -> Pipeline {
 
 impl Pipeline {
     async fn process_frame(&self, frame: Frame) -> Frame {
-        let canny_frame = frame.canny().await.to_bgr().await;
+        let canny = frame.clone().canny().await.convert_to_bgr().await;
 
-        frame
-            .dilate()
-            .await
-            .add_weighted(canny_frame.processed_mat, 0.8, 1.0)
-            .await
+        frame.add_weighted(canny.processed_mat, 1.0, 0.8).await
     }
 
     pub async fn spawn_process_thread(&self, thread_num: i32) {
@@ -147,32 +146,33 @@ impl Pipeline {
                     self.process_send(f).await;
                 },
                 frame = output_stream.next() => {
-                    let f = frame.unwrap();
+                    let mut f = frame.unwrap();
                     let mut sf = self.sorted_frames.lock().await;
-                    let next_frame_num = sf.next_frame_num + 1;
+
+                    f.end_date = Some(Utc::now());
 
                     sf.frames.push(Reverse(f));
 
-                    self.output_frame(sf, next_frame_num, output_stream.len() as i64);
+                    self.output_frame(sf);
                 },
 
             }
         }
     }
 
-    fn output_frame(
-        &self,
-        mut sf: MutexGuard<OrderedFrames>,
-        next_frame_num: i64,
-        stream_len: i64,
-    ) {
+    fn output_frame(&self, mut sf: MutexGuard<OrderedFrames>) {
         if !sf.frames.is_empty() {
             if let Some(min_frame) = sf.clone().frames.peek() {
                 if min_frame.0.num == sf.next_frame_num {
                     sf.frames.pop();
+
+                    let duration = min_frame.0.end_date.unwrap() - min_frame.0.start_date;
+
                     debug!(
-                        "frame {}\toutput\t\tnext_frame {}\tbuffer {}",
-                        min_frame.0.num, next_frame_num, stream_len
+                        "frame {}\toutput\t\tduration {}\tbuffer {}",
+                        min_frame.0.num,
+                        format!("{}ms", duration.num_milliseconds()),
+                        sf.frames.len(),
                     );
 
                     if !min_frame.0.text.is_empty() {
@@ -181,6 +181,10 @@ impl Pipeline {
 
                     self.preview_sender.send(min_frame.clone().0).unwrap();
                     sf.next_frame_num += 1;
+
+                    if !sf.frames.is_empty() {
+                        self.output_frame(sf);
+                    }
                 }
             }
         }

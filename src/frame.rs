@@ -1,20 +1,25 @@
+use chrono::{DateTime, Utc};
 use libvips::{ops, VipsImage};
 use opencv::{
-    core::{add_weighted, Mat, Point, Scalar, Size, ToOutputArray, BORDER_DEFAULT},
+    core::{
+        add_weighted, Mat, Point, Scalar, Size, ToInputArray, ToOutputArray, UMat, BORDER_DEFAULT,
+    },
     imgproc::{
         bilateral_filter, canny, cvt_color, dilate as dilate_image, get_structuring_element,
         COLOR_BGR2GRAY, COLOR_GRAY2BGR, MORPH_DILATE,
     },
     photo::{detail_enhance, inpaint, INPAINT_TELEA},
-    prelude::MatTraitConstManual,
+    prelude::*,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Frame {
     pub mat: Mat,
-    pub processed_mat: Mat,
+    pub processed_mat: UMat,
     pub num: i64,
     pub text: String,
+    pub start_date: DateTime<Utc>,
+    pub end_date: Option<DateTime<Utc>>,
 }
 
 unsafe impl Send for Frame {}
@@ -42,18 +47,22 @@ impl Ord for Frame {
 
 #[allow(dead_code)]
 impl Frame {
-    pub async fn run_ocr(&self) -> Frame {
-        let mut mutable_frame = self.clone();
-        let frame_size = mutable_frame.mat.size().unwrap();
-        let frame_bytes = mutable_frame.mat.data_bytes().unwrap();
-        let vips_image = VipsImage::new_from_memory(
+    fn make_vips(&self) -> VipsImage {
+        let frame_size = self.mat.size().unwrap();
+        let frame_bytes = self.mat.data_bytes().unwrap();
+
+        VipsImage::new_from_memory(
             frame_bytes,
             frame_size.width,
             frame_size.height,
             1,
             ops::BandFormat::Uchar,
         )
-        .unwrap();
+        .unwrap()
+    }
+    pub async fn run_ocr(&self) -> Frame {
+        let mut mutable_frame = self.clone();
+        let vips_image = self.make_vips();
         let png_image = ops::pngsave_buffer(&vips_image).unwrap();
 
         let mut lt = leptess::LepTess::new(None, "eng").unwrap();
@@ -67,38 +76,41 @@ impl Frame {
 
         mutable_frame
     }
-    pub async fn to_gray(&self) -> Frame {
-        let mut gray = Mat::default();
-        let mut mutable_frame = self.clone();
+    pub async fn convert_to_gray(mut self) -> Frame {
+        cvt_color(
+            &self.processed_mat.input_array().unwrap(),
+            &mut self.processed_mat.output_array().unwrap(),
+            COLOR_BGR2GRAY,
+            0,
+        )
+        .unwrap();
 
-        cvt_color(&mutable_frame.processed_mat, &mut gray, COLOR_BGR2GRAY, 0).unwrap();
-
-        mutable_frame.processed_mat = gray;
-
-        mutable_frame
+        self
     }
-    pub async fn to_bgr(&self) -> Frame {
-        let mut bgr = Mat::default();
-        let mut mutable_frame = self.clone();
+    pub async fn convert_to_bgr(mut self) -> Frame {
+        cvt_color(
+            &self.processed_mat.input_array().unwrap(),
+            &mut self.processed_mat.output_array().unwrap(),
+            COLOR_GRAY2BGR,
+            0,
+        )
+        .unwrap();
 
-        cvt_color(&mutable_frame.processed_mat, &mut bgr, COLOR_GRAY2BGR, 0).unwrap();
-
-        mutable_frame.processed_mat = bgr;
-
-        mutable_frame
+        self
     }
-    pub async fn detail_enhance(&self) -> Frame {
-        let mut bgr = Mat::default();
-        let mut mutable_frame = self.clone();
+    pub async fn detail_enhance(mut self) -> Frame {
+        detail_enhance(
+            &self.processed_mat.input_array().unwrap(),
+            &mut self.processed_mat.output_array().unwrap(),
+            5.0,
+            5.0,
+        )
+        .unwrap();
 
-        detail_enhance(&mutable_frame.processed_mat, &mut bgr, 12.0, 5.0).unwrap();
-
-        mutable_frame.processed_mat = bgr;
-
-        mutable_frame
+        self
     }
     pub async fn bilateral_filter(&self) -> Frame {
-        let mut filtered_image = Mat::default();
+        let mut filtered_image = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
         let mut mutable_frame = self.clone();
 
         bilateral_filter(
@@ -115,14 +127,10 @@ impl Frame {
 
         mutable_frame
     }
-    pub async fn dilate(&self) -> Frame {
-        let mut dilated = Mat::default();
-        let output_array = &mut dilated.output_array().unwrap();
-        let mut mutable_frame = self.clone();
-
+    pub async fn dilate(mut self) -> Frame {
         dilate_image(
-            &self.processed_mat,
-            output_array,
+            &self.processed_mat.input_array().unwrap(),
+            &mut self.processed_mat.output_array().unwrap(),
             &get_structuring_element(
                 MORPH_DILATE,
                 Size {
@@ -139,54 +147,40 @@ impl Frame {
         )
         .unwrap();
 
-        mutable_frame.processed_mat = dilated;
-
-        mutable_frame
+        self
     }
-    pub async fn canny(&self) -> Frame {
-        let mut canny_mat = Mat::default();
-        let mut mutable_frame = self.clone();
+    pub async fn canny(mut self) -> Frame {
+        let mut canny_mat = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
         canny(&self.processed_mat, &mut canny_mat, 100.0, 100.0, 3, false).unwrap();
 
-        mutable_frame.processed_mat = canny_mat;
+        self.processed_mat = canny_mat;
 
-        mutable_frame
+        self
     }
-    pub async fn add_weighted(&self, overlay: Mat, alpha: f64, beta: f64) -> Frame {
-        let mut weighted = Mat::default();
-        let mut mutable_frame = self.clone();
-
+    pub async fn add_weighted(mut self, overlay: UMat, alpha: f64, beta: f64) -> Frame {
         add_weighted(
-            &self.processed_mat,
+            &self.processed_mat.input_array().unwrap(),
             alpha,
-            &overlay,
+            &overlay.input_array().unwrap(),
             beta,
             2.0,
-            &mut weighted,
+            &mut self.processed_mat.output_array().unwrap(),
             0,
         )
         .unwrap();
 
-        mutable_frame.processed_mat = weighted;
-
-        mutable_frame
+        self
     }
-
-    pub fn inpaint(&self, mask: Mat) -> Frame {
-        let mut painted = Mat::default();
-        let mut mutable_frame = self.clone();
-
+    pub async fn inpaint(mut self, mask: UMat) -> Frame {
         inpaint(
-            &mutable_frame.processed_mat,
+            &self.processed_mat.input_array().unwrap(),
             &mask,
-            &mut painted,
+            &mut self.processed_mat.output_array().unwrap(),
             3.0,
             INPAINT_TELEA,
         )
         .unwrap();
 
-        mutable_frame.processed_mat = painted;
-
-        mutable_frame
+        self
     }
 }

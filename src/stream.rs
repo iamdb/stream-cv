@@ -1,12 +1,16 @@
 extern crate ffmpeg_next as ffmpeg;
 
+use crate::frame::Frame;
 use crate::pipeline::Pipeline;
+use chrono::Utc;
 use ffmpeg::format::{input, Pixel};
 use ffmpeg::frame::Video;
 use ffmpeg::software::scaling::{context::Context as FFContext, flag::Flags};
 use ffmpeg::sys::{av_log_set_level, AV_LOG_QUIET};
-use opencv::core::{Mat, CV_8UC3};
+use futures::Stream;
+use opencv::core::{Mat, UMat, CV_8UC3};
 use opencv::imgproc::{cvt_color, COLOR_RGB2BGR};
+use std::collections::VecDeque;
 use std::ffi::c_void;
 
 pub struct VideoStream<'p> {
@@ -18,6 +22,22 @@ pub struct VideoStream<'p> {
     pub frame_index: i64,
     scaler: Option<FFContext>,
     pipe: &'p Pipeline,
+    queue: VecDeque<Frame>,
+}
+
+impl<'p> Stream for VideoStream<'p> {
+    type Item = Frame;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        if self.queue.is_empty() {
+            std::task::Poll::Pending
+        } else {
+            std::task::Poll::Ready(self.queue.pop_front())
+        }
+    }
 }
 
 impl<'p> VideoStream<'p> {
@@ -31,6 +51,7 @@ impl<'p> VideoStream<'p> {
             url,
             frame_index: 0,
             pipe,
+            queue: VecDeque::new(),
         }
     }
     pub async fn decode(&mut self) {
@@ -87,37 +108,34 @@ impl<'p> VideoStream<'p> {
             for (stream, packet) in ictx.packets() {
                 if stream.index() == video_stream_index {
                     match decoder.send_packet(&packet) {
-                        Ok(_) => {
-                            self.receive_and_process_decoded_frames(&mut decoder)
-                                .await
-                                .unwrap();
-                        }
+                        Ok(_) => self.receive_and_process_decoded_frames(&mut decoder).await,
                         Err(error) => error!("{}", error.to_string()),
                     }
                 }
             }
 
             decoder.send_eof().unwrap();
-            self.receive_and_process_decoded_frames(&mut decoder)
-                .await
-                .unwrap();
+            self.receive_and_process_decoded_frames(&mut decoder).await;
 
             self.decoding = false;
         }
     }
-    async fn receive_and_process_decoded_frames(
-        &mut self,
-        decoder: &mut ffmpeg::decoder::Video,
-    ) -> Result<(), ffmpeg::Error> {
+
+    async fn receive_and_process_decoded_frames(&mut self, decoder: &mut ffmpeg::decoder::Video) {
         let mut decoded = Video::empty();
         while decoder.receive_frame(&mut decoded).is_ok() {
             let mut rgb_frame = Video::empty();
+
             self.scaler
                 .as_mut()
                 .unwrap()
-                .run(&decoded, &mut rgb_frame)?;
+                .run(&decoded, &mut rgb_frame)
+                .unwrap();
+
             let rgb_mat: Mat;
             let mut bgr_mat = Mat::default();
+            let mut bgr_umat = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
+
             unsafe {
                 let raw_rgb_frame = rgb_frame.as_ptr().as_ref().unwrap();
 
@@ -130,18 +148,22 @@ impl<'p> VideoStream<'p> {
                 )
                 .unwrap();
             }
+
             cvt_color(&rgb_mat, &mut bgr_mat, COLOR_RGB2BGR, 0).unwrap();
+            cvt_color(&rgb_mat, &mut bgr_umat, COLOR_RGB2BGR, 0).unwrap();
+
             let new_frame = crate::Frame {
                 mat: bgr_mat.clone(),
                 num: self.frame_index,
-                processed_mat: bgr_mat.clone(),
+                processed_mat: bgr_umat,
                 text: "".to_string(),
+                start_date: Utc::now(),
+                end_date: None,
             };
 
             self.pipe.decode_send(new_frame).await;
 
             self.frame_index += 1;
         }
-        Ok(())
     }
 }
