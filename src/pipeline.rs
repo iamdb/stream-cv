@@ -62,9 +62,12 @@ impl Pipeline {
     async fn process_frame(&self, frame: Frame) -> Frame {
         let canny = frame.clone().canny().await.convert_to_bgr().await;
 
-        frame.add_weighted(canny.processed_mat, 1.0, 0.8).await
+        frame
+            .dilate()
+            .await
+            .add_weighted(canny.processed_mat, 1.0, 0.8)
+            .await
     }
-
     pub async fn spawn_process_thread(&self, thread_num: i32) {
         let mut stream = self.process_stream();
         loop {

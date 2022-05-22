@@ -109,12 +109,11 @@ impl Frame {
 
         self
     }
-    pub async fn bilateral_filter(&self) -> Frame {
+    pub async fn bilateral_filter(mut self) -> Frame {
         let mut filtered_image = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
-        let mut mutable_frame = self.clone();
 
         bilateral_filter(
-            &mutable_frame.processed_mat,
+            &self.processed_mat,
             &mut filtered_image,
             3,
             120.0,
@@ -123,9 +122,9 @@ impl Frame {
         )
         .unwrap();
 
-        mutable_frame.processed_mat = filtered_image;
+        self.processed_mat = filtered_image;
 
-        mutable_frame
+        self
     }
     pub async fn dilate(mut self) -> Frame {
         dilate_image(

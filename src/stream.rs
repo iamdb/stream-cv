@@ -133,7 +133,6 @@ impl<'p> VideoStream<'p> {
                 .unwrap();
 
             let rgb_mat: Mat;
-            let mut bgr_mat = Mat::default();
             let mut bgr_umat = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
 
             unsafe {
@@ -149,11 +148,10 @@ impl<'p> VideoStream<'p> {
                 .unwrap();
             }
 
-            cvt_color(&rgb_mat, &mut bgr_mat, COLOR_RGB2BGR, 0).unwrap();
             cvt_color(&rgb_mat, &mut bgr_umat, COLOR_RGB2BGR, 0).unwrap();
 
             let new_frame = crate::Frame {
-                mat: bgr_mat.clone(),
+                mat: rgb_mat.clone(),
                 num: self.frame_index,
                 processed_mat: bgr_umat,
                 text: "".to_string(),
