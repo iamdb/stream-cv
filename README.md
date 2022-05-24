@@ -9,6 +9,6 @@
 
 ## What is this?
 
-An environment for me to test ideas and learn Rust and become more familiar with these other projects. It has no inherent goal or purpose except to extract a frame out of a stream, run it through a pipeline and output it some place.
+An environment for me to test ideas, learn Rust and become more familiar with these other projects. It has no inherent goal or purpose except to extract a frame out of a stream, run it through a pipeline and output it some place.
 
 To run: `cargo run <path to video file or url to ffmpeg supported stream>`
