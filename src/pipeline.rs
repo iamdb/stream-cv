@@ -9,7 +9,10 @@ use tokio::{
     sync::{Mutex, MutexGuard},
 };
 
-use crate::frame::Frame;
+use crate::{
+    img::frame::Frame,
+    roi::{self, RegionOfInterestList},
+};
 
 #[derive(Clone)]
 struct OrderedFrames {
@@ -19,6 +22,7 @@ struct OrderedFrames {
 
 type SyncOrderedFrames = Arc<Mutex<OrderedFrames>>;
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Pipeline {
     decode_receiver: Receiver<Frame>,
@@ -30,9 +34,10 @@ pub struct Pipeline {
     process_receiver: Receiver<Frame>,
     process_sender: Sender<Frame>,
     sorted_frames: SyncOrderedFrames,
+    regions: RegionOfInterestList,
 }
 
-pub fn new() -> Pipeline {
+pub fn new(regions: RegionOfInterestList) -> Pipeline {
     let count = thread::available_parallelism().unwrap().get();
 
     let (process_sender, process_receiver) = bounded::<Frame>(count);
@@ -55,18 +60,37 @@ pub fn new() -> Pipeline {
         process_receiver,
         process_sender,
         sorted_frames,
+        regions,
     }
 }
 
+#[allow(dead_code)]
 impl Pipeline {
     async fn process_frame(&self, frame: Frame) -> Frame {
-        let canny = frame.clone().canny().await.convert_to_bgr().await;
+        // if self.regions.len() > 0 {
+        //     self.process_regions(frame.clone()).await;
+        // }
+
+        //let canny = frame.clone().canny().await.convert_to_bgr().await;
 
         frame
-            .dilate()
+            .bilateral_filter()
             .await
-            .add_weighted(canny.processed_mat, 1.0, 0.8)
+            .adjust_brightness(-30.0)
             .await
+            .adjust_contrast(2.0)
+            .await
+    }
+    async fn process_regions(&self, frame: Frame) {
+        for region in self.regions.iter() {
+            match region.roi_type {
+                roi::RegionOfInterestType::Text => {
+                    frame.text_detection(region).await;
+
+                    debug!("**** ROI RESULT: {:?}", frame.result_text);
+                }
+            }
+        }
     }
     pub async fn spawn_process_thread(&self, thread_num: i32) {
         let mut stream = self.process_stream();
@@ -115,14 +139,18 @@ impl Pipeline {
     }
 
     pub async fn start_router(&self) {
-        let count = thread::available_parallelism().unwrap().get();
+        let mut count = thread::available_parallelism().unwrap().get() as f64;
         let p = self.clone();
+
+        if count > 10. {
+            count -= 6.;
+        }
 
         thread::spawn(move || {
             p.spawn_preview_thread();
         });
 
-        for i in 0..(count - 2) {
+        for i in 0..(count - 2.) as i32 {
             let p = self.clone();
             spawn(async move {
                 p.spawn_process_thread(i as i32).await;
@@ -146,6 +174,9 @@ impl Pipeline {
                 frame = decode_stream.next() => {
                     let f = frame.unwrap();
                     debug!("frame {}\tdecoded\t\tbuffer {}", f.num, decode_stream.len());
+                    if !f.result_text.is_empty() {
+                        debug!("frame {}\ttext: {:?}", f.num, f.result_text);
+                    }
                     self.process_send(f).await;
                 },
                 frame = output_stream.next() => {

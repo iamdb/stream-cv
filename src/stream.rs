@@ -1,6 +1,6 @@
 extern crate ffmpeg_next as ffmpeg;
 
-use crate::frame::Frame;
+use crate::img::frame::Frame;
 use crate::pipeline::Pipeline;
 use chrono::Utc;
 use ffmpeg::format::{input, Pixel};
@@ -8,8 +8,9 @@ use ffmpeg::frame::Video;
 use ffmpeg::software::scaling::{context::Context as FFContext, flag::Flags};
 use ffmpeg::sys::{av_log_set_level, AV_LOG_QUIET};
 use futures::Stream;
-use opencv::core::{Mat, UMat, CV_8UC3};
+use opencv::core::{Mat, ToInputArray, ToOutputArray, UMat, CV_8UC3};
 use opencv::imgproc::{cvt_color, COLOR_RGB2BGR};
+use opencv::prelude::MatTraitConst;
 use std::collections::VecDeque;
 use std::ffi::c_void;
 
@@ -132,7 +133,7 @@ impl<'p> VideoStream<'p> {
                 .run(&decoded, &mut rgb_frame)
                 .unwrap();
 
-            let rgb_mat: Mat;
+            let mut rgb_mat: Mat;
             let mut bgr_umat = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
 
             unsafe {
@@ -148,7 +149,17 @@ impl<'p> VideoStream<'p> {
                 .unwrap();
             }
 
-            cvt_color(&rgb_mat, &mut bgr_umat, COLOR_RGB2BGR, 0).unwrap();
+            cvt_color(
+                &rgb_mat.input_array().unwrap(),
+                &mut rgb_mat.output_array().unwrap(),
+                COLOR_RGB2BGR,
+                0,
+            )
+            .unwrap();
+
+            rgb_mat
+                .copy_to(&mut bgr_umat.output_array().unwrap())
+                .unwrap();
 
             let new_frame = crate::Frame {
                 mat: rgb_mat.clone(),
@@ -157,6 +168,7 @@ impl<'p> VideoStream<'p> {
                 text: "".to_string(),
                 start_date: Utc::now(),
                 end_date: None,
+                result_text: Vec::new(),
             };
 
             self.pipe.decode_send(new_frame).await;
