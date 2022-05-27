@@ -74,7 +74,7 @@ impl Pipeline {
         //let canny = frame.clone().canny().await.convert_to_bgr().await;
 
         frame
-            .bilateral_filter()
+            .bilateral_filter(5, 120., 120.)
             .await
             .adjust_brightness(-30.0)
             .await

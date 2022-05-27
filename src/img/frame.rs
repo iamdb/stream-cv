@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use libvips::{ops, VipsImage};
 use opencv::{
     core::{
-        add_weighted, Mat, Point, Point2f, Rect2d, Scalar, Size, ToInputArray, ToOutputArray, UMat,
-        BORDER_CONSTANT, BORDER_DEFAULT, DECOMP_LU,
+        add_weighted, Mat, Point as OpenCVPoint, Point2f, Scalar, Size as OpenCVSize, ToInputArray,
+        ToOutputArray, UMat, BORDER_CONSTANT, BORDER_DEFAULT, DECOMP_LU,
     },
     dnn::{self, TextDetectionModel_EAST},
     imgproc::{
@@ -18,6 +18,9 @@ use opencv::{
 };
 
 use crate::roi::RegionOfInterest;
+
+type Size = OpenCVSize;
+type Point = OpenCVPoint;
 
 #[derive(Clone)]
 pub struct Frame {
@@ -122,27 +125,27 @@ impl Frame {
         self
     }
 
-    pub async fn detail_enhance(mut self) -> Frame {
+    pub async fn detail_enhance(mut self, sigma_s: f32, sigma_r: f32) -> Frame {
         detail_enhance(
             &self.processed_mat.input_array().unwrap(),
             &mut self.processed_mat.output_array().unwrap(),
-            10.0,
-            0.15,
+            sigma_s,
+            sigma_r,
         )
         .unwrap();
 
         self
     }
 
-    pub async fn bilateral_filter(mut self) -> Frame {
+    pub async fn bilateral_filter(mut self, d: i32, sigma_color: f64, sigma_space: f64) -> Frame {
         let mut filtered_image = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
 
         bilateral_filter(
             &self.processed_mat,
             &mut filtered_image,
-            3,
-            120.0,
-            120.0,
+            d,
+            sigma_color,
+            sigma_space,
             BORDER_DEFAULT,
         )
         .unwrap();
@@ -152,21 +155,13 @@ impl Frame {
         self
     }
 
-    pub async fn dilate(mut self) -> Frame {
+    pub async fn dilate(mut self, size: Size, iterations: i32, point: Point) -> Frame {
         dilate_image(
             &self.processed_mat.input_array().unwrap(),
             &mut self.processed_mat.output_array().unwrap(),
-            &get_structuring_element(
-                MORPH_DILATE,
-                Size {
-                    width: 2,
-                    height: 2,
-                },
-                Point { x: -1, y: -1 },
-            )
-            .unwrap(),
-            Point { x: -1, y: -1 },
-            1,
+            &get_structuring_element(MORPH_DILATE, size, Point { x: -1, y: -1 }).unwrap(),
+            point,
+            iterations,
             BORDER_DEFAULT,
             Scalar::new(0.0, 0.0, 0.0, 0.0),
         )
@@ -184,13 +179,13 @@ impl Frame {
         self
     }
 
-    pub async fn add_weighted(mut self, overlay: UMat, alpha: f64, beta: f64) -> Frame {
+    pub async fn add_weighted(mut self, overlay: UMat, alpha: f64, beta: f64, gamma: f64) -> Frame {
         add_weighted(
             &self.processed_mat.input_array().unwrap(),
             alpha,
             &overlay.input_array().unwrap(),
             beta,
-            2.0,
+            gamma,
             &mut self.processed_mat.output_array().unwrap(),
             0,
         )
@@ -229,11 +224,6 @@ impl Frame {
             .unwrap()
     }
 
-    pub async fn text_detection(&self, region: &RegionOfInterest) {
-        let (detector, recognizer) = make_text_detector();
-        text_detection(self.clone(), detector, recognizer, region).await;
-    }
-
     pub async fn adjust_contrast(mut self, amount: f64) -> Frame {
         let base_mat = self.processed_mat.clone();
         base_mat
@@ -262,18 +252,9 @@ impl Frame {
         self
     }
 
-    pub async fn adjust_brightness_and_contrast(mut self, brightness: f64, contrast: f64) -> Frame {
-        let base_mat = self.processed_mat.clone();
-        base_mat
-            .convert_to(
-                &mut self.processed_mat.output_array().unwrap(),
-                -1,
-                contrast,
-                brightness,
-            )
-            .unwrap();
-
-        self
+    pub async fn text_detection(&self, region: &RegionOfInterest) {
+        let (detector, recognizer) = make_text_detector();
+        text_detection(self.clone(), detector, recognizer, region).await;
     }
 
     // pub async fn adjust_gamma(mut self) -> Frame {
@@ -347,7 +328,7 @@ async fn text_detection(
     recognizer: dnn::TextRecognitionModel,
     region: &RegionOfInterest,
 ) {
-    let mat = frame.clone().detail_enhance().await.extract_roi(region);
+    let mat = frame.extract_roi(region);
     // Detection
     let mut det_results = VectorOfVectorOfPoint::new();
     detector.detect(&mat, &mut det_results).unwrap();
