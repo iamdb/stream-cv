@@ -1,13 +1,15 @@
 use chrono::{DateTime, Utc};
 use opencv::{
     core::{
-        add_weighted, bitwise_and, bitwise_not, Mat, Point as OpenCVPoint, Range, Scalar,
-        Size as OpenCVSize, ToInputArray, ToOutputArray, UMat, BORDER_DEFAULT,
+        add_weighted, bitwise_and, bitwise_not, Mat, Point as OpenCVPoint, Range, Rect_, Scalar,
+        Size as OpenCVSize, ToInputArray, ToInputOutputArray, ToOutputArray, UMat, UMatUsageFlags,
+        Vector, BORDER_DEFAULT,
     },
     dnn,
     imgproc::{
         bilateral_filter, canny, cvt_color, dilate as dilate_image, get_structuring_element,
-        threshold, COLOR_BGR2GRAY, COLOR_GRAY2BGR, COLOR_GRAY2RGB, MORPH_DILATE, THRESH_BINARY,
+        put_text, rectangle, threshold, COLOR_BGR2GRAY, COLOR_GRAY2BGR, COLOR_GRAY2RGB,
+        FONT_HERSHEY_SIMPLEX, MORPH_DILATE, THRESH_BINARY,
     },
     photo::{detail_enhance, inpaint, INPAINT_TELEA},
     prelude::*,
@@ -28,8 +30,7 @@ pub struct Frame {
     pub text: String,
     pub start_date: DateTime<Utc>,
     pub end_date: Option<DateTime<Utc>>,
-    pub result_text: Vec<String>,
-    pub results: Arc<Mutex<RegionOfInterestList>>,
+    pub results: RegionOfInterestList,
 }
 
 unsafe impl Send for Frame {}
@@ -97,7 +98,7 @@ impl Frame {
         self
     }
 
-    pub async fn detail_enhance(mut self, sigma_s: f32, sigma_r: f32) -> Frame {
+    pub async fn detail_enhance(&mut self, sigma_s: f32, sigma_r: f32) -> Frame {
         detail_enhance(
             &self.processed_mat.input_array().unwrap(),
             &mut self.processed_mat.output_array().unwrap(),
@@ -106,21 +107,29 @@ impl Frame {
         )
         .unwrap();
 
-        self
+        self.to_owned()
     }
 
-    pub async fn bilateral_filter(mut self, d: i32, sigma_color: f64, sigma_space: f64) -> Frame {
-        bilateral_filter(
+    pub async fn bilateral_filter(&mut self, d: i32, sigma_color: f64, sigma_space: f64) -> Frame {
+        let mut filtered = UMat::new(UMatUsageFlags::USAGE_DEFAULT);
+
+        match bilateral_filter(
             &self.processed_mat.input_array().unwrap(),
-            &mut self.processed_mat.output_array().unwrap(),
+            &mut filtered.output_array().unwrap(),
             d,
             sigma_color,
             sigma_space,
             BORDER_DEFAULT,
-        )
-        .unwrap();
-
-        self
+        ) {
+            Ok(_) => {
+                self.processed_mat = filtered;
+                self.clone()
+            }
+            Err(err) => {
+                error!("error applying bilateral filter\t{}", err.message);
+                self.clone()
+            }
+        }
     }
 
     pub async fn dilate(mut self, size: Size, iterations: i32, point: Point) -> Frame {
@@ -139,7 +148,7 @@ impl Frame {
     }
 
     pub async fn canny(mut self) -> Frame {
-        let mut canny_mat = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
+        let mut canny_mat = UMat::new(UMatUsageFlags::USAGE_DEFAULT);
         canny(&self.processed_mat, &mut canny_mat, 100.0, 100.0, 3, false).unwrap();
 
         self.processed_mat = canny_mat;
@@ -175,9 +184,9 @@ impl Frame {
         self
     }
 
-    pub fn extract_roi(&self, region: RegionOfInterest) -> Mat {
+    pub fn extract_roi(&self, region: RegionOfInterest) -> UMat {
         let mut cropped = self
-            .mat
+            .processed_mat
             .clone()
             .col_range(&Range::new(region.x, region.x + region.width).unwrap())
             .unwrap();
@@ -189,7 +198,7 @@ impl Frame {
         cropped
     }
 
-    pub async fn adjust_contrast(mut self, amount: f64) -> Frame {
+    pub async fn adjust_contrast(&mut self, amount: f64) -> Frame {
         let base_mat = self.processed_mat.clone();
         base_mat
             .convert_to(
@@ -200,7 +209,7 @@ impl Frame {
             )
             .unwrap();
 
-        self.clone()
+        self.to_owned()
     }
 
     pub async fn adjust_brightness(mut self, amount: f64) -> Frame {
@@ -276,39 +285,82 @@ impl Frame {
         self
     }
 
+    pub async fn list_text_recognition(
+        mut self,
+        region_list: RegionOfInterestList,
+        shared_recognizer: &Arc<Mutex<dnn::TextRecognitionModel>>,
+    ) -> Frame {
+        let array: Vector<Rect_<i32>> = region_list.vec_of_rects();
+        let mut results: Vector<String> = Vector::new();
+
+        let recognizer = shared_recognizer.lock().await;
+        recognizer
+            .recognize_1(&self.processed_mat, &array, &mut results)
+            .unwrap();
+
+        for (i, region) in region_list.iter().enumerate() {
+            let mut new_region = region.clone();
+            new_region.set_text_result(results.get(i).unwrap());
+            self.results.add_region(new_region);
+        }
+
+        self
+    }
+
     pub async fn text_recognition(
-        self,
+        mut self,
         mut region: RegionOfInterest,
         shared_recognizer: &Arc<Mutex<dnn::TextRecognitionModel>>,
     ) -> Frame {
-        let mut mat = self.extract_roi(region.clone());
-        let output_arr = &mut mat.output_array().unwrap();
-
-        cvt_color(&mat.input_array().unwrap(), output_arr, COLOR_BGR2GRAY, 0).unwrap();
-
-        mat.convert_to(output_arr, -1, 1.25, 1.25).unwrap();
+        let mat = self.extract_roi(region.clone());
 
         let recognizer = shared_recognizer.lock().await;
         let recognition_result = recognizer.recognize(&mat).unwrap();
 
         region.set_text_result(recognition_result);
 
-        self.results.lock().await.add_region(region);
+        self.results.add_region(region);
 
         self
     }
 
-    pub async fn add_result(self, region: RegionOfInterest) {
-        self.results.lock().await.add_region(region);
+    pub async fn add_result(mut self, region: RegionOfInterest) {
+        self.results.add_region(region);
     }
 
-    // pub async fn adjust_gamma(mut self) -> Frame {
-    //     let mut hsv = Mat::default();
-    //     cvt_color(&self.processed_mat, &mut hsv, COLOR_BGR2HSV, 0).unwrap();
-    //
-    //     let mid = 0.5;
-    //     let mean: i32 = 32;
-    //
-    //     self
-    // }
+    pub fn highlight_regions(&mut self) -> Frame {
+        for region in self.results.iter() {
+            let rect = Rect_::new(region.x, region.y, region.width, region.height);
+
+            rectangle(
+                &mut self.processed_mat.input_output_array().unwrap(),
+                rect,
+                Scalar::new(0., 255., 0.0, 1.0),
+                1,
+                0,
+                0,
+            )
+            .unwrap();
+
+            if region.result_text.is_some() {
+                put_text(
+                    &mut self.processed_mat.input_output_array().unwrap(),
+                    region.result_text.as_ref().unwrap(),
+                    opencv::core::Point_ {
+                        x: region.x + region.width + 5,
+                        y: region.y + region.height,
+                    },
+                    FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    Scalar::new(0., 255., 0.0, 1.0),
+                    1,
+                    0,
+                    false,
+                )
+                .unwrap();
+            }
+        }
+
+        self.to_owned()
+    }
 }

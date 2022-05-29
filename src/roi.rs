@@ -1,5 +1,7 @@
 use std::slice::Iter;
 
+use opencv::core::{Rect_, Vector};
+
 #[derive(Clone, Debug)]
 pub enum RegionOfInterestType {
     Text,
@@ -15,9 +17,23 @@ pub struct RegionOfInterest {
     pub result_text: Option<String>,
     pub result_number: Option<i32>,
     pub name: String,
+    pub base_resolution: StreamResolution,
 }
 
-pub fn new_region(name: String, x: i32, y: i32, width: i32, height: i32) -> RegionOfInterest {
+#[derive(Debug, Clone)]
+pub enum StreamResolution {
+    HD720p,
+    HD1080p,
+}
+
+pub fn new_region(
+    name: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    res: StreamResolution,
+) -> RegionOfInterest {
     RegionOfInterest {
         x,
         y,
@@ -27,6 +43,7 @@ pub fn new_region(name: String, x: i32, y: i32, width: i32, height: i32) -> Regi
         result_text: None,
         result_number: None,
         name,
+        base_resolution: res,
     }
 }
 
@@ -51,8 +68,16 @@ impl RegionOfInterestList {
         self.list.push(region);
     }
 
-    pub fn add_new_region(&mut self, name: String, x: i32, y: i32, width: i32, height: i32) {
-        let region = new_region(name, x, y, width, height);
+    pub fn add_new_region(
+        &mut self,
+        name: String,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        res: StreamResolution,
+    ) {
+        let region = new_region(name, x, y, width, height, res);
 
         self.add_region(region);
     }
@@ -73,6 +98,13 @@ impl RegionOfInterestList {
         self.list
             .iter()
             .map(|i| format!("{}\t{}", i.name, i.result_text.clone().unwrap()))
+            .collect()
+    }
+
+    pub fn vec_of_rects(&self) -> Vector<Rect_<i32>> {
+        self.list
+            .iter()
+            .map(|i| Rect_::new(i.x, i.y, i.width, i.height))
             .collect()
     }
 }

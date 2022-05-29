@@ -13,10 +13,10 @@ pub fn make_text_recognizer() -> dnn::TextRecognitionModel {
     debug!("loading models for text recognition");
     let rec_model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("models")
-        .join("crnn.onnx");
+        .join("crnn_cs.onnx");
     let voc_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("models")
-        .join("alphabet_36.txt");
+        .join("alphabet_94.txt");
 
     let mut recognizer =
         dnn::TextRecognitionModel::from_file(rec_model_path.to_str().unwrap(), "").unwrap();
@@ -41,7 +41,7 @@ pub fn make_text_recognizer() -> dnn::TextRecognitionModel {
     recognizer
         .set_vocabulary(&vocabulary)
         .unwrap()
-        .set_decode_type("CTC-prefix-beam-search")
+        .set_decode_type("CTC-greedy")
         .unwrap()
         .set_input_params(rec_scale, rec_input_size, rec_mean, false, false)
         .unwrap();
