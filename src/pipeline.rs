@@ -3,15 +3,21 @@ use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, thread};
 use chrono::Utc;
 use flume::{bounded, r#async::RecvStream, unbounded, Receiver, Sender};
 use futures::StreamExt;
-use opencv::highgui::{imshow, poll_key};
+use opencv::{
+    core::{Rect_, Scalar, ToInputOutputArray, UMat},
+    dnn,
+    highgui::{imshow, poll_key},
+    imgproc::{put_text, rectangle, FONT_HERSHEY_SIMPLEX},
+};
 use tokio::{
     select, spawn,
     sync::{Mutex, MutexGuard},
 };
 
 use crate::{
-    img::frame::Frame,
+    img::{self, frame::Frame},
     roi::{self, RegionOfInterestList},
+    Config,
 };
 
 #[derive(Clone)]
@@ -35,13 +41,15 @@ pub struct Pipeline {
     process_sender: Sender<Frame>,
     sorted_frames: SyncOrderedFrames,
     regions: RegionOfInterestList,
+    recognizer: Arc<Mutex<dnn::TextRecognitionModel>>,
+    config: Config,
 }
 
-pub fn new(regions: RegionOfInterestList) -> Pipeline {
+pub fn new(regions: RegionOfInterestList, config: Config) -> Pipeline {
     let count = thread::available_parallelism().unwrap().get();
 
     let (process_sender, process_receiver) = bounded::<Frame>(count);
-    let (output_sender, output_receiver) = bounded::<Frame>(count / 2);
+    let (output_sender, output_receiver) = unbounded::<Frame>();
     let (decode_sender, decode_receiver) = bounded::<Frame>(count);
     let (preview_sender, preview_receiver) = unbounded::<Frame>();
 
@@ -50,48 +58,57 @@ pub fn new(regions: RegionOfInterestList) -> Pipeline {
         next_frame_num: 0,
     }));
 
+    let base_recognizer = img::make_text_recognizer();
+
+    let recognizer = Arc::new(Mutex::new(base_recognizer));
+
     Pipeline {
+        config,
         decode_receiver,
         decode_sender,
         output_receiver,
         output_sender,
-        preview_sender,
         preview_receiver,
+        preview_sender,
         process_receiver,
         process_sender,
-        sorted_frames,
+        recognizer,
         regions,
+        sorted_frames,
     }
 }
 
 #[allow(dead_code)]
 impl Pipeline {
     async fn process_frame(&self, frame: Frame) -> Frame {
-        // if self.regions.len() > 0 {
-        //     self.process_regions(frame.clone()).await;
-        // }
+        if !self.regions.is_empty() {
+            self.process_regions(frame.clone()).await;
+        }
 
-        let thresh = frame
-            .clone()
-            .bilateral_filter(3, 120., 120.)
-            .await
-            .adjust_brightness(-10.0)
-            .await
-            .adjust_contrast(1.25)
-            .await
-            .threshold()
-            .await;
+        // let thresh = frame
+        //     .clone()
+        //     .bilateral_filter(3, 220., 120.)
+        //     .await
+        //     .adjust_brightness(-10.0)
+        //     .await
+        //     .adjust_contrast(1.25)
+        //     .await
+        //     .threshold()
+        //     .await;
+        //
+        // frame.add_weighted(thresh.processed_mat, 1., 0.5, 0.0).await
 
-        frame.add_weighted(thresh.processed_mat, 0.75, 1., 1.).await
+        frame
     }
 
     async fn process_regions(&self, frame: Frame) {
         for region in self.regions.iter() {
             match region.roi_type {
                 roi::RegionOfInterestType::Text => {
-                    frame.text_detection(region).await;
-
-                    debug!("**** ROI RESULT: {:?}", frame.result_text);
+                    frame
+                        .clone()
+                        .text_recognition(region.clone(), &self.recognizer)
+                        .await;
                 }
             }
         }
@@ -207,19 +224,17 @@ impl Pipeline {
 
                     let duration = min_frame.0.end_date.unwrap() - min_frame.0.start_date;
 
-                    debug!(
+                    info!(
                         "frame {}\toutput\t\tduration {}\tbuffer {}",
                         min_frame.0.num,
                         format!("{}ms", duration.num_milliseconds()),
                         sf.frames.len(),
                     );
 
-                    if !min_frame.0.text.is_empty() {
-                        debug!("frame text: {}", min_frame.0.text);
+                    if self.config.show_frames {
+                        self.preview_sender.send(min_frame.0.clone()).unwrap();
                     }
-
-                    self.preview_sender.send(min_frame.clone().0).unwrap();
-                    sf.next_frame_num += 1;
+                    sf.next_frame_num += 2;
 
                     if !sf.frames.is_empty() {
                         self.output_frame(sf);
@@ -230,7 +245,45 @@ impl Pipeline {
     }
 }
 
+fn highlight_regions(mut mat: UMat, regions: Arc<Mutex<RegionOfInterestList>>) -> UMat {
+    for region in regions.blocking_lock().iter() {
+        let rect = Rect_::new(region.x, region.y, region.width, region.height);
+
+        rectangle(
+            &mut mat.input_output_array().unwrap(),
+            rect,
+            Scalar::new(0., 255., 0.0, 1.0),
+            1,
+            0,
+            0,
+        )
+        .unwrap();
+
+        put_text(
+            &mut mat.input_output_array().unwrap(),
+            region.result_text.as_ref().unwrap(),
+            opencv::core::Point_ {
+                x: region.x + region.width + 5,
+                y: region.y + region.height,
+            },
+            FONT_HERSHEY_SIMPLEX,
+            0.75,
+            Scalar::new(0., 255., 0.0, 1.0),
+            2,
+            0,
+            false,
+        )
+        .unwrap();
+    }
+
+    mat
+}
+
 fn show_frame(frame: Frame) {
-    imshow("frames", &frame.processed_mat).unwrap();
+    debug!("frame {}\tshowing frame", frame.num);
+
+    let mat = highlight_regions(frame.processed_mat, frame.results);
+
+    imshow("frames", &mat).unwrap();
     poll_key().unwrap();
 }

@@ -1,58 +1,40 @@
 extern crate ffmpeg_next as ffmpeg;
 
-use crate::img::frame::Frame;
 use crate::pipeline::Pipeline;
+use crate::{roi, Config};
 use chrono::Utc;
 use ffmpeg::format::{input, Pixel};
 use ffmpeg::frame::Video;
 use ffmpeg::software::scaling::{context::Context as FFContext, flag::Flags};
 use ffmpeg::sys::{av_log_set_level, AV_LOG_QUIET};
-use futures::Stream;
-use opencv::core::{Mat, ToInputArray, ToOutputArray, UMat, CV_8UC3};
-use opencv::imgproc::{cvt_color, COLOR_RGB2BGR};
+use opencv::core::{Mat, ToOutputArray, UMat, CV_8UC3};
 use opencv::prelude::MatTraitConst;
-use std::collections::VecDeque;
 use std::ffi::c_void;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct VideoStream<'p> {
     _width: i32,
     _height: i32,
     _framerate: i32,
     pub decoding: bool,
-    url: String,
     pub frame_index: i64,
     scaler: Option<FFContext>,
     pipe: &'p Pipeline,
-    queue: VecDeque<Frame>,
-}
-
-impl<'p> Stream for VideoStream<'p> {
-    type Item = Frame;
-
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        if self.queue.is_empty() {
-            std::task::Poll::Pending
-        } else {
-            std::task::Poll::Ready(self.queue.pop_front())
-        }
-    }
+    config: Config,
 }
 
 impl<'p> VideoStream<'p> {
-    pub fn new(url: String, pipe: &'p Pipeline) -> Self {
+    pub fn new(config: Config, pipe: &'p Pipeline) -> Self {
         VideoStream {
             _width: 0,
             _height: 0,
             _framerate: 0,
             decoding: false,
             scaler: None,
-            url,
             frame_index: 0,
             pipe,
-            queue: VecDeque::new(),
+            config,
         }
     }
     pub async fn decode(&mut self) {
@@ -61,7 +43,7 @@ impl<'p> VideoStream<'p> {
         unsafe { av_log_set_level(AV_LOG_QUIET) }
 
         info!("****setting up decoder*****");
-        if let Ok(mut ictx) = input(&self.url) {
+        if let Ok(mut ictx) = input(&self.config.url) {
             info!("*****building input*****");
             let streams = ictx.streams();
 
@@ -83,7 +65,7 @@ impl<'p> VideoStream<'p> {
                 ffmpeg::codec::context::Context::from_parameters(input.parameters()).unwrap();
 
             context_decoder.set_threading(ffmpeg::threading::Config {
-                count: 1,
+                count: self.config.num_libav_threads as usize,
                 kind: ffmpeg::threading::Type::Frame,
                 safe: true,
             });
@@ -125,6 +107,10 @@ impl<'p> VideoStream<'p> {
     async fn receive_and_process_decoded_frames(&mut self, decoder: &mut ffmpeg::decoder::Video) {
         let mut decoded = Video::empty();
         while decoder.receive_frame(&mut decoded).is_ok() {
+            if self.frame_index.rem_euclid(2) != 0 {
+                self.frame_index += 1;
+                continue;
+            }
             let mut rgb_frame = Video::empty();
 
             self.scaler
@@ -149,14 +135,6 @@ impl<'p> VideoStream<'p> {
                 .unwrap();
             }
 
-            // cvt_color(
-            //     &rgb_mat.input_array().unwrap(),
-            //     &mut rgb_mat.output_array().unwrap(),
-            //     COLOR_RGB2BGR,
-            //     0,
-            // )
-            // .unwrap();
-
             rgb_mat
                 .copy_to(&mut bgr_umat.output_array().unwrap())
                 .unwrap();
@@ -169,6 +147,7 @@ impl<'p> VideoStream<'p> {
                 start_date: Utc::now(),
                 end_date: None,
                 result_text: Vec::new(),
+                results: Arc::new(Mutex::new(roi::new_region_list())),
             };
 
             self.pipe.decode_send(new_frame).await;

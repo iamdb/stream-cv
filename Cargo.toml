@@ -4,15 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-async-recursion = "1.0.0"
-chrono = "0.4.19"
-ffmpeg-next = "5.0.3"
-flume = "0.10.12"
-futures = "0.3.21"
-leptess = "0.13.2"
-libvips = "1.4.3"
+chrono = "0.4"
+ffmpeg-next = "5.0"
+flume = "0.10"
+futures = "0.3"
 log = "0.4"
-opencv = { version = "0.63.1", features = ["clang-runtime", "rgb"]}
+clap = { version = "3.1", features = ["derive"] }
+opencv = { version = "0.64", features = ["clang-runtime", "rgb"]}
 pretty_env_logger = "0.4"
-rgb = "0.8.32"
-tokio = { version = "1.18.1", features = ["full"] }
+rgb = "0.8"
+tokio = { version = "1.18", features = ["full"] }
