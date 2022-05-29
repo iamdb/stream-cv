@@ -4,13 +4,15 @@ use chrono::{DateTime, Utc};
 use libvips::{ops, VipsImage};
 use opencv::{
     core::{
-        add_weighted, Mat, Point as OpenCVPoint, Point2f, Scalar, Size as OpenCVSize, ToInputArray,
-        ToOutputArray, UMat, BORDER_CONSTANT, BORDER_DEFAULT, DECOMP_LU,
+        add_weighted, bitwise_and, bitwise_not, Mat, Point as OpenCVPoint, Point2f, Rect2d, Scalar,
+        Size as OpenCVSize, ToInputArray, ToInputOutputArray, ToOutputArray, UMat, VecN,
+        BORDER_CONSTANT, BORDER_DEFAULT, DECOMP_LU,
     },
     dnn::{self, TextDetectionModel_EAST},
     imgproc::{
         self, bilateral_filter, canny, cvt_color, dilate as dilate_image, get_structuring_element,
-        COLOR_BGR2GRAY, COLOR_GRAY2BGR, MORPH_DILATE,
+        rectangle_points, threshold, COLOR_BGR2GRAY, COLOR_GRAY2BGR, COLOR_GRAY2RGB, MORPH_DILATE,
+        THRESH_BINARY,
     },
     photo::{detail_enhance, inpaint, INPAINT_TELEA},
     prelude::*,
@@ -125,6 +127,18 @@ impl Frame {
         self
     }
 
+    pub async fn convert_to_rgb(mut self) -> Frame {
+        cvt_color(
+            &self.processed_mat.input_array().unwrap(),
+            &mut self.processed_mat.output_array().unwrap(),
+            COLOR_GRAY2RGB,
+            0,
+        )
+        .unwrap();
+
+        self
+    }
+
     pub async fn detail_enhance(mut self, sigma_s: f32, sigma_r: f32) -> Frame {
         detail_enhance(
             &self.processed_mat.input_array().unwrap(),
@@ -214,6 +228,19 @@ impl Frame {
         //     region.width as f64,
         //     region.height as f64,
         // );
+        //
+        // let pt1 = VecN::new(region.x, region.y, region.width, region.height);
+        //
+        // rectangle_points(
+        //     &mut self.processed_mat.input_output_array().unwrap(),
+        //     Point::from_vec2(pt1),
+        //     pt2,
+        //     color,
+        //     thickness,
+        //     line_type,
+        //     shift,
+        // );
+
         self.mat
             .adjust_roi(
                 region.y,
@@ -248,6 +275,65 @@ impl Frame {
                 amount,
             )
             .unwrap();
+
+        self
+    }
+
+    pub async fn threshold(mut self) -> Frame {
+        threshold(
+            &self.processed_mat.input_array().unwrap(),
+            &mut self.processed_mat.output_array().unwrap(),
+            120.0,
+            255.0,
+            THRESH_BINARY,
+        )
+        .unwrap();
+
+        self
+    }
+
+    pub async fn bitwise_not(mut self, mask: Option<UMat>) -> Frame {
+        if let Some(mask) = mask {
+            bitwise_not(
+                &self.processed_mat.input_array().unwrap(),
+                &mut self.processed_mat.output_array().unwrap(),
+                &mask,
+            )
+            .unwrap();
+        } else {
+            let empty = Mat::zeros(
+                self.processed_mat.rows(),
+                self.processed_mat.cols(),
+                self.processed_mat.typ(),
+            )
+            .unwrap();
+
+            bitwise_not(
+                &self.processed_mat.input_array().unwrap(),
+                &mut self.processed_mat.output_array().unwrap(),
+                &empty,
+            )
+            .unwrap();
+        }
+
+        self
+    }
+
+    pub async fn bitwise_and(mut self, mask: UMat) -> Frame {
+        let empty = Mat::zeros(
+            self.processed_mat.rows(),
+            self.processed_mat.cols(),
+            self.processed_mat.typ(),
+        )
+        .unwrap();
+
+        bitwise_and(
+            &self.processed_mat.input_array().unwrap(),
+            &empty.input_array().unwrap(),
+            &mut self.processed_mat.output_array().unwrap(),
+            &mask,
+        )
+        .unwrap();
 
         self
     }

@@ -95,7 +95,7 @@ impl<'p> VideoStream<'p> {
                     decoder.format(),
                     decoder.width(),
                     decoder.height(),
-                    Pixel::RGB24,
+                    Pixel::BGR24,
                     decoder.width(),
                     decoder.height(),
                     Flags::LANCZOS,
@@ -133,7 +133,7 @@ impl<'p> VideoStream<'p> {
                 .run(&decoded, &mut rgb_frame)
                 .unwrap();
 
-            let mut rgb_mat: Mat;
+            let rgb_mat: Mat;
             let mut bgr_umat = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
 
             unsafe {
@@ -149,13 +149,13 @@ impl<'p> VideoStream<'p> {
                 .unwrap();
             }
 
-            cvt_color(
-                &rgb_mat.input_array().unwrap(),
-                &mut rgb_mat.output_array().unwrap(),
-                COLOR_RGB2BGR,
-                0,
-            )
-            .unwrap();
+            // cvt_color(
+            //     &rgb_mat.input_array().unwrap(),
+            //     &mut rgb_mat.output_array().unwrap(),
+            //     COLOR_RGB2BGR,
+            //     0,
+            // )
+            // .unwrap();
 
             rgb_mat
                 .copy_to(&mut bgr_umat.output_array().unwrap())

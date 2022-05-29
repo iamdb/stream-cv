@@ -71,16 +71,20 @@ impl Pipeline {
         //     self.process_regions(frame.clone()).await;
         // }
 
-        //let canny = frame.clone().canny().await.convert_to_bgr().await;
+        let thresh = frame
+            .clone()
+            .bilateral_filter(3, 120., 120.)
+            .await
+            .adjust_brightness(-10.0)
+            .await
+            .adjust_contrast(1.25)
+            .await
+            .threshold()
+            .await;
 
-        frame
-            .bilateral_filter(5, 120., 120.)
-            .await
-            .adjust_brightness(-30.0)
-            .await
-            .adjust_contrast(2.0)
-            .await
+        frame.add_weighted(thresh.processed_mat, 0.75, 1., 1.).await
     }
+
     async fn process_regions(&self, frame: Frame) {
         for region in self.regions.iter() {
             match region.roi_type {
@@ -92,6 +96,7 @@ impl Pipeline {
             }
         }
     }
+
     pub async fn spawn_process_thread(&self, thread_num: i32) {
         let mut stream = self.process_stream();
         loop {
