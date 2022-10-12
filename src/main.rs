@@ -5,6 +5,7 @@ extern crate log;
 mod img;
 mod pipeline;
 mod roi;
+mod state;
 mod stream;
 
 use std::thread::available_parallelism;

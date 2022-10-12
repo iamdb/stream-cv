@@ -56,7 +56,7 @@ impl Ord for Frame {
     }
 }
 
-#[allow(dead_code)]
+#[allow(unused)]
 impl Frame {
     pub fn set_start_date(&mut self, date: DateTime<Utc>) {
         self.start_date = date;

@@ -1,5 +1,3 @@
-use std::{sync::Arc, thread};
-
 use chrono::Utc;
 use flume::{bounded, r#async::RecvStream, Receiver, Sender};
 use futures::StreamExt;
@@ -7,14 +5,17 @@ use opencv::{
     dnn,
     highgui::{imshow, poll_key},
 };
+use std::{sync::Arc, thread};
 use tokio::{select, spawn, sync::Mutex};
 
 use crate::{
     img::{self, frame::Frame},
     roi::RegionOfInterestList,
+    state::{self, GameState, Weapon},
     Config,
 };
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct Pipeline {
     decode_receiver: Receiver<Frame>,
@@ -26,6 +27,7 @@ pub struct Pipeline {
     regions: RegionOfInterestList,
     recognizer: Arc<Mutex<dnn::TextRecognitionModel>>,
     config: Config,
+    state: GameState,
 }
 
 pub fn new(regions: RegionOfInterestList, config: Config) -> Pipeline {
@@ -47,6 +49,7 @@ pub fn new(regions: RegionOfInterestList, config: Config) -> Pipeline {
         process_sender,
         recognizer,
         regions,
+        state: state::new(),
     }
 }
 
@@ -131,6 +134,12 @@ impl Pipeline {
                         debug!("frame {}\tprocessed\tduration {}ms\tbuffer {}", processed_frame.num, process_time.num_milliseconds(), self.process_receiver.len());
                         processed_frame.end_date = Some(Utc::now());
 
+                        let w1 = processed_frame.results.get_value("weapon_1_name".to_string());
+                        let w2 = processed_frame.results.get_value("weapon_2_name".to_string());
+                        let sim1 = Weapon::match_string(w1.result_text.as_ref().unwrap().to_string());
+                        let sim2 = Weapon::match_string(w2.result_text.as_ref().unwrap().to_string());
+
+                        println!("::::::::::::::::::::::::::::::::: sim1: {:?} sim2: {:?}", sim1, sim2);
 
                         self.output_frame(processed_frame);
                     }

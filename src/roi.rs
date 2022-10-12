@@ -1,6 +1,5 @@
-use std::slice::Iter;
-
 use opencv::core::{Rect_, Vector};
+use std::slice::Iter;
 
 #[derive(Clone, Debug)]
 pub enum RegionOfInterestType {
@@ -20,6 +19,7 @@ pub struct RegionOfInterest {
     pub base_resolution: StreamResolution,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum StreamResolution {
     HD720p,
@@ -80,6 +80,14 @@ impl RegionOfInterestList {
         let region = new_region(name, x, y, width, height, res);
 
         self.add_region(region);
+    }
+
+    pub fn get_value(&self, region_name: String) -> RegionOfInterest {
+        self.list
+            .iter()
+            .find(|r| r.name == region_name)
+            .unwrap()
+            .clone()
     }
 
     pub fn iter(&self) -> Iter<RegionOfInterest> {
