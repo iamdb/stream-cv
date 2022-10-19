@@ -299,8 +299,8 @@ impl Frame {
             .unwrap();
 
         for (i, region) in region_list.iter().enumerate() {
-            let mut new_region = region.clone();
-            new_region.set_text_result(results.get(i).unwrap());
+            let (_, mut new_region) = region.clone();
+            new_region.set_result(results.get(i).unwrap());
             self.results.add_region(new_region);
         }
 
@@ -317,7 +317,7 @@ impl Frame {
         let recognizer = shared_recognizer.lock().await;
         let recognition_result = recognizer.recognize(&mat).unwrap();
 
-        region.set_text_result(recognition_result);
+        region.set_result(recognition_result);
 
         self.results.add_region(region);
 
@@ -329,7 +329,7 @@ impl Frame {
     }
 
     pub fn highlight_regions(&mut self) -> Frame {
-        for region in self.results.iter() {
+        for (_, region) in self.results.iter() {
             let rect = Rect_::new(region.x, region.y, region.width, region.height);
 
             rectangle(
@@ -342,10 +342,10 @@ impl Frame {
             )
             .unwrap();
 
-            if region.result_text.is_some() {
+            if region.result.is_some() {
                 put_text(
                     &mut self.processed_mat.input_output_array().unwrap(),
-                    region.result_text.as_ref().unwrap(),
+                    region.result.as_ref().unwrap(),
                     opencv::core::Point_ {
                         x: region.x + region.width + 5,
                         y: region.y + region.height,

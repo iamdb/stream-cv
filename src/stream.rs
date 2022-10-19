@@ -50,7 +50,9 @@ impl VideoStream {
 
             if let Some(input) = streams.best(ffmpeg::media::Type::Video) {
                 let video_stream_index = input.index();
-                info!("Stream spec: {}", input.metadata().get("comment").unwrap());
+                if let Some(comment) = input.metadata().get("comment") {
+                    info!("Stream spec: {}", comment);
+                }
 
                 let mut context_decoder =
                     ffmpeg::codec::context::Context::from_parameters(input.parameters()).unwrap();
@@ -136,7 +138,7 @@ impl VideoStream {
                 .copy_to(&mut bgr_umat.output_array().unwrap())
                 .unwrap();
 
-            let new_frame = crate::Frame {
+            let new_frame = crate::img::frame::Frame {
                 mat: bgr_mat.clone(),
                 num: self.frame_index,
                 processed_mat: bgr_umat,

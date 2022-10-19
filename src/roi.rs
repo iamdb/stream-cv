@@ -1,5 +1,5 @@
 use opencv::core::{Rect_, Vector};
-use std::slice::Iter;
+use std::collections::{hash_map::IntoIter, HashMap};
 
 #[derive(Clone, Debug)]
 pub enum RegionOfInterestType {
@@ -13,8 +13,7 @@ pub struct RegionOfInterest {
     pub width: i32,
     pub height: i32,
     pub roi_type: RegionOfInterestType,
-    pub result_text: Option<String>,
-    pub result_number: Option<i32>,
+    pub result: Option<String>,
     pub name: String,
     pub base_resolution: StreamResolution,
 }
@@ -40,32 +39,32 @@ pub fn new_region(
         width,
         height,
         roi_type: RegionOfInterestType::Text,
-        result_text: None,
-        result_number: None,
+        result: None,
         name,
         base_resolution: res,
     }
 }
 
 impl RegionOfInterest {
-    pub fn set_text_result(&mut self, result: String) {
-        self.result_text = Some(result);
+    pub fn set_result(&mut self, result: String) {
+        self.result = Some(result);
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct RegionOfInterestList {
-    list: Vec<RegionOfInterest>,
+    list: HashMap<String, RegionOfInterest>,
 }
 
 pub fn new_region_list() -> RegionOfInterestList {
-    RegionOfInterestList { list: Vec::new() }
+    RegionOfInterestList {
+        list: HashMap::new(),
+    }
 }
 
-#[allow(dead_code)]
 impl RegionOfInterestList {
     pub fn add_region(&mut self, region: RegionOfInterest) {
-        self.list.push(region);
+        self.list.insert(region.clone().name, region);
     }
 
     pub fn add_new_region(
@@ -82,16 +81,12 @@ impl RegionOfInterestList {
         self.add_region(region);
     }
 
-    pub fn get_value(&self, region_name: String) -> RegionOfInterest {
-        self.list
-            .iter()
-            .find(|r| r.name == region_name)
-            .unwrap()
-            .clone()
+    pub fn get_value(&self, region_name: String) -> Option<&RegionOfInterest> {
+        self.list.get(&region_name)
     }
 
-    pub fn iter(&self) -> Iter<RegionOfInterest> {
-        self.list.iter()
+    pub fn iter(&self) -> IntoIter<String, RegionOfInterest> {
+        self.list.clone().into_iter()
     }
 
     pub fn len(&self) -> i32 {
@@ -105,14 +100,14 @@ impl RegionOfInterestList {
     pub fn get_log(&self) -> String {
         self.list
             .iter()
-            .map(|i| format!("{}\t{}", i.name, i.result_text.clone().unwrap()))
+            .map(|i| format!("{}\t{}", i.1.name, i.1.result.clone().unwrap()))
             .collect()
     }
 
     pub fn vec_of_rects(&self) -> Vector<Rect_<i32>> {
         self.list
             .iter()
-            .map(|i| Rect_::new(i.x, i.y, i.width, i.height))
+            .map(|i| Rect_::new(i.1.x, i.1.y, i.1.width, i.1.height))
             .collect()
     }
 }
