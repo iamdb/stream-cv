@@ -93,6 +93,7 @@ pub enum Weapon {
     P2020,
     N3030,
     Car,
+    G7Scout,
 }
 
 impl Weapon {
@@ -150,6 +151,7 @@ impl ToString for Weapon {
             Weapon::N3030 => "30-30",
             Weapon::Car => "Car",
             Weapon::Devotion => "Devotion",
+            Weapon::G7Scout => "G7 Scout",
         };
 
         s.to_string()

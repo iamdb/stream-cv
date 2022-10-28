@@ -118,28 +118,14 @@ impl VideoStream {
                 .run(&decoded, &mut rgb_frame)
                 .unwrap();
 
-            let bgr_mat: Mat;
             let mut bgr_umat = UMat::new(opencv::core::UMatUsageFlags::USAGE_DEFAULT);
 
-            unsafe {
-                let raw_rgb_frame = rgb_frame.as_ptr().as_ref().unwrap();
-
-                bgr_mat = Mat::new_rows_cols_with_data(
-                    raw_rgb_frame.height,
-                    raw_rgb_frame.width,
-                    CV_8UC3,
-                    raw_rgb_frame.data[0] as *mut c_void,
-                    raw_rgb_frame.linesize[0].try_into().unwrap(),
-                )
-                .unwrap();
-            }
-
-            bgr_mat
-                .copy_to(&mut bgr_umat.output_array().unwrap())
-                .unwrap();
+            let mut mat = Mat::from_slice(rgb_frame.data_mut(0)).unwrap();
+            mat = mat.reshape(3, rgb_frame.height() as i32).unwrap();
+            mat.copy_to(&mut bgr_umat).unwrap();
 
             let new_frame = crate::img::frame::Frame {
-                mat: bgr_mat.clone(),
+                mat,
                 num: self.frame_index,
                 processed_mat: bgr_umat,
                 text: "".to_string(),
