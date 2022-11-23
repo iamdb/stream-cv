@@ -25,7 +25,7 @@ async fn main() {
         debug!("opencv is using optimized code")
     }
 
-    set_num_threads(config.num_opencv_threads).unwrap();
+    set_num_threads(config.num_opencv_threads / 2).unwrap();
 
     let opencv_threads = get_num_threads().expect("error retrieving number of threads");
     debug!("opencv is using {} threads", opencv_threads);
@@ -34,8 +34,15 @@ async fn main() {
 
     let regions = apex.regions();
 
-    let pipe = stream_cv::pipeline::new(regions, config.clone());
-    pipe.start_router().await;
+    let pipe = stream_cv::pipeline::new();
+    if config.show_frames {
+        pipe.start_preview_thread();
+    }
+
+    for i in 0..config.num_opencv_threads / 2 {
+        pipe.process_thread(i as i32, config.show_frames, regions.clone())
+            .await;
+    }
 
     let decoder_sender = pipe.get_decode_sender();
     let mut stream = VideoStream::new(config, decoder_sender);

@@ -29,6 +29,6 @@ pub struct Config {
     #[clap(long, default_value_t = 1)]
     pub num_libav_threads: i32,
 
-    #[clap(long, default_value_t = 5)]
+    #[clap(long, default_value_t = 2)]
     pub process_frame_rate: i64,
 }
