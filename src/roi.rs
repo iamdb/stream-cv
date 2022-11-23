@@ -18,7 +18,6 @@ pub struct RegionOfInterest {
     pub base_resolution: StreamResolution,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum StreamResolution {
     HD720p,

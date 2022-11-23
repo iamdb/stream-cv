@@ -59,7 +59,7 @@ impl Game for Apex {
         list
     }
 
-    fn extract_data(&self, frame: crate::img::frame::Frame) {
+    fn extract_data(&self, _frame: crate::img::frame::Frame) {
         todo!()
     }
 
@@ -97,8 +97,9 @@ pub enum Weapon {
 }
 
 impl Weapon {
-    pub fn match_string(s: String) -> Option<(Weapon, f64)> {
+    pub fn match_string(mut s: String) -> Option<(Weapon, f64)> {
         let weapons = enum_iterator::all::<Weapon>().collect::<Vec<_>>();
+        s.make_ascii_lowercase();
 
         if let Some(max) = weapons
             .iter()
@@ -106,10 +107,7 @@ impl Weapon {
             .map(|w| {
                 (
                     w,
-                    strsim::jaro_winkler(
-                        &s.to_string().to_lowercase(),
-                        &w.to_string().to_lowercase(),
-                    ),
+                    strsim::jaro_winkler(&s.to_string(), &w.to_string().to_lowercase()),
                 )
             })
             .max_by(|w1, w2| w1.1.total_cmp(&w2.1))

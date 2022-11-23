@@ -1,12 +1,12 @@
 use chrono::Utc;
-use flume::{bounded, r#async::RecvStream, Receiver, Sender};
+use flume::{bounded, Receiver, Sender};
 use futures::StreamExt;
 use opencv::{
-    dnn,
+    dnn::{self, TextRecognitionModel},
     highgui::{imshow, poll_key},
 };
 use std::{sync::Arc, thread};
-use tokio::{select, spawn, sync::Mutex};
+use tokio::{select, sync::Mutex};
 
 use crate::{
     games::apex::Weapon,
@@ -18,21 +18,21 @@ use crate::{
 
 #[allow(dead_code)]
 #[derive(Clone)]
-pub struct Pipeline {
+pub struct Pipeline<'f> {
     decode_receiver: Receiver<Frame>,
     decode_sender: Sender<Frame>,
     preview_receiver: Receiver<Frame>,
     preview_sender: Sender<Frame>,
-    process_receiver: Receiver<Frame>,
-    process_sender: Sender<Frame>,
+    process_receiver: Receiver<&'f mut Frame>,
+    process_sender: Sender<&'f mut Frame>,
     regions: RegionOfInterestList,
     recognizer: Arc<Mutex<dnn::TextRecognitionModel>>,
     config: Config,
     state: GameState,
 }
 
-pub fn new(regions: RegionOfInterestList, config: Config) -> Pipeline {
-    let (process_sender, process_receiver) = bounded::<Frame>(60);
+pub fn new<'f>(regions: RegionOfInterestList, config: Config) -> Pipeline<'f> {
+    let (process_sender, process_receiver) = bounded::<&mut Frame>(60);
     let (decode_sender, decode_receiver) = bounded::<Frame>(60);
     let (preview_sender, preview_receiver) = bounded::<Frame>(60);
 
@@ -54,111 +54,57 @@ pub fn new(regions: RegionOfInterestList, config: Config) -> Pipeline {
     }
 }
 
-#[allow(dead_code)]
-impl Pipeline {
-    async fn process_frame(&self, mut frame: Frame) -> Frame {
-        frame
-            .bilateral_filter(9, 75., 75.)
-            .await
-            .adjust_contrast(1.55)
-            .await
-            .adjust_brightness(-10.)
-            .await;
-
-        if !self.regions.is_empty() {
-            frame = self.process_regions(frame).await;
-        }
-
-        frame
+impl<'f> Pipeline<'f> {
+    pub fn get_decode_sender(&self) -> Sender<Frame> {
+        self.decode_sender.clone()
     }
-
-    async fn process_regions(&self, frame: Frame) -> Frame {
-        frame
-            .list_text_recognition(self.regions.clone(), &self.recognizer)
-            .await
-    }
-
-    fn process_stream(&self) -> RecvStream<Frame> {
-        self.process_receiver.stream()
-    }
-
-    pub async fn process_send(&self, frame: Frame) {
-        self.process_sender.send_async(frame).await.unwrap();
-    }
-
-    fn decode_stream(&self) -> RecvStream<Frame> {
-        self.decode_receiver.stream()
-    }
-
-    pub async fn decode_send(&self, frame: Frame) {
-        self.decode_sender.send_async(frame).await.unwrap();
-    }
-
     pub async fn start_router(&self) {
         if self.config.show_frames {
-            let p = self.clone();
+            let p = self.preview_receiver.clone();
             thread::spawn(move || {
-                p.spawn_preview_thread();
+                spawn_preview_thread(p);
             });
         }
 
-        let p = self.clone();
-        spawn(async move {
-            p.route_frames().await;
-        });
-    }
+        let preview_send = self.preview_sender.clone();
+        let decode_receiver = self.decode_receiver.clone();
+        let recognizer = self.recognizer.clone();
+        let show_frames = self.config.show_frames;
+        let regions = self.regions.clone();
 
-    fn spawn_preview_thread(&self) {
-        while let Ok(frame) = self.preview_receiver.recv() {
-            show_frame(frame);
-        }
-    }
+        tokio::spawn(async move {
+            let mut decode_stream = decode_receiver.stream();
 
-    async fn route_frames(&self) {
-        let mut decode_stream = self.decode_stream();
-        let mut process_stream = self.process_stream();
+            loop {
+                select! {
+                    frame = decode_stream.next() => {
+                        if let Some(mut f) = frame {
+                           debug!("frame {}\tdecoded\t\tbuffer {}", f.num, decode_stream.len());
 
-        loop {
-            select! {
-                frame = decode_stream.next() => {
-                    if let Some(f) = frame {
-                       debug!("frame {}\tdecoded\t\tbuffer {}", f.num, decode_stream.len());
-                       self.process_send(f).await;
-                    }
-                }
-                frame = process_stream.next() => {
-                    if let Some(f) = frame {
-                        let start_time = Utc::now();
-                        let mut processed_frame = self.process_frame(f).await;
-                        let process_time = Utc::now() - start_time;
+                            let start_time = Utc::now();
+                            process_frame(&mut f, regions.clone(), &recognizer).await;
+                            let process_time = Utc::now() - start_time;
 
-                        debug!("frame {}\tprocessed\tduration {}ms\tbuffer {}", processed_frame.num, process_time.num_milliseconds(), self.process_receiver.len());
-                        processed_frame.end_date = Some(Utc::now());
+                            debug!("frame {}\tprocessed\tduration {}ms", f.num, process_time.num_milliseconds());
+                            f.end_date = Some(Utc::now());
 
-                        let w1 = processed_frame.results.get_value("weapon_1_name".to_string()).unwrap();
-                        let w2 = processed_frame.results.get_value("weapon_2_name".to_string()).unwrap();
-                        let sim1 = Weapon::match_string(w1.result.as_ref().unwrap().to_string());
-                        let sim2 = Weapon::match_string(w2.result.as_ref().unwrap().to_string());
+                            // let w1 = f.results.get_value("weapon_1_name".to_string()).unwrap();
+                            // let w2 = f.results.get_value("weapon_2_name".to_string()).unwrap();
+                            // let sim1 = Weapon::match_string(w1.result.as_ref().unwrap().to_string());
+                            // let sim2 = Weapon::match_string(w2.result.as_ref().unwrap().to_string());
+                            //
+                            // println!("::::::::::::::::::::::::::::::::: sim1: {:?} sim2: {:?}", sim1, sim2);
 
-                        println!("::::::::::::::::::::::::::::::::: sim1: {:?} sim2: {:?}", sim1, sim2);
+                            info!("frame {}\toutput", f.num);
 
-                        self.output_frame(processed_frame);
+                            if show_frames {
+                                preview_send.send(f.clone()).unwrap();
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
-
-    fn output_frame(&self, frame: Frame) {
-        info!("frame {}\toutput", frame.num,);
-
-        if self.config.show_frames {
-            self.preview_sender.send(frame).unwrap();
-        }
-    }
-
-    pub fn get_decode_sender(self) -> Sender<Frame> {
-        self.decode_sender
+        });
     }
 }
 
@@ -169,4 +115,36 @@ fn show_frame(mut frame: Frame) {
 
     imshow("frames", &frame.processed_mat).unwrap();
     poll_key().unwrap();
+}
+
+fn spawn_preview_thread(recv: Receiver<Frame>) {
+    while let Ok(frame) = recv.recv() {
+        show_frame(frame);
+    }
+}
+
+async fn process_frame<'f>(
+    frame: &'f mut Frame,
+    regions: RegionOfInterestList,
+    recognizer: &Arc<Mutex<TextRecognitionModel>>,
+) {
+    frame
+        .bilateral_filter(9, 75., 75.)
+        .await
+        .adjust_contrast(1.55)
+        .await
+        .adjust_brightness(-10.)
+        .await;
+
+    if regions.is_empty() {
+        process_regions(frame, regions, recognizer).await;
+    }
+}
+
+async fn process_regions<'f>(
+    frame: &'f mut Frame,
+    regions: RegionOfInterestList,
+    recognizer: &Arc<Mutex<TextRecognitionModel>>,
+) {
+    frame.list_text_recognition(regions, recognizer).await;
 }

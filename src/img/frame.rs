@@ -285,11 +285,11 @@ impl Frame {
         self
     }
 
-    pub async fn list_text_recognition(
-        mut self,
+    pub async fn list_text_recognition<'f>(
+        &mut self,
         region_list: RegionOfInterestList,
         shared_recognizer: &Arc<Mutex<dnn::TextRecognitionModel>>,
-    ) -> Frame {
+    ) {
         let array: Vector<Rect_<i32>> = region_list.vec_of_rects();
         let mut results: Vector<String> = Vector::new();
 
@@ -303,8 +303,6 @@ impl Frame {
             new_region.set_result(results.get(i).unwrap());
             self.results.add_region(new_region);
         }
-
-        self
     }
 
     pub async fn text_recognition(
@@ -328,7 +326,7 @@ impl Frame {
         self.results.add_region(region);
     }
 
-    pub fn highlight_regions(&mut self) -> Frame {
+    pub fn highlight_regions(&mut self) {
         for (_, region) in self.results.iter() {
             let rect = Rect_::new(region.x, region.y, region.width, region.height);
 
@@ -360,7 +358,5 @@ impl Frame {
                 .unwrap();
             }
         }
-
-        self.to_owned()
     }
 }
